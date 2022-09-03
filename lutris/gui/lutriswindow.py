@@ -69,10 +69,8 @@ class LutrisWindow(Gtk.ApplicationWindow):  # pylint: disable=too-many-public-me
         update_desktop_icons()
         load_icon_theme()
         self.application = application
-        self.window_x = settings.read_setting("window_x")
-        self.window_y = settings.read_setting("window_y")
-        if self.window_x and self.window_y:
-            self.move(int(self.window_x), int(self.window_y))
+        self.window_x, self.window_y = self.get_position()
+        self.restore_window_position()
         self.threads_stoppers = []
         self.window_size = (width, height)
         self.maximized = settings.read_setting("maximized") == "True"
@@ -137,7 +135,7 @@ class LutrisWindow(Gtk.ApplicationWindow):  # pylint: disable=too-many-public-me
                 self.on_show_installed_state_change,
                 type="b",
                 default=self.filter_installed,
-                accel="<Primary>h",
+                accel="<Primary>i",
             ),
             "toggle-viewtype": Action(self.on_toggle_viewtype),
             "icon-type": Action(self.on_icontype_state_change, type="s", default=self.icon_type),
@@ -157,6 +155,7 @@ class LutrisWindow(Gtk.ApplicationWindow):  # pylint: disable=too-many-public-me
                 self.hidden_state_change,
                 type="b",
                 default=self.show_hidden_games,
+                accel="<Primary>h",
             ),
             "open-forums": Action(lambda *x: open_uri("https://forums.lutris.net/")),
             "open-discord": Action(lambda *x: open_uri("https://discord.gg/Pnt5CuY")),
@@ -213,7 +212,7 @@ class LutrisWindow(Gtk.ApplicationWindow):  # pylint: disable=too-many-public-me
         """Hides or shows the hidden games"""
         action.set_state(value)
         settings.write_setting("show_hidden_games", str(value).lower(), section="lutris")
-        self.filters["hidden"] = value
+        self.filters["hidden"] = bool(value)
         self.emit("view-updated")
 
     @property
@@ -412,27 +411,37 @@ class LutrisWindow(Gtk.ApplicationWindow):  # pylint: disable=too-many-public-me
 
     def show_empty_label(self):
         """Display a label when the view is empty"""
-        if self.filters.get("text"):
-            self.show_label(_("No games matching '%s' found ") % self.filters["text"])
+        filter_text = self.filters.get("text")
+        if filter_text:
+            if self.filters.get("category") == "favorite":
+                self.show_label(_("Add a game matching '%s' to your favorites to see it here.") % filter_text)
+            elif self.filters.get("installed"):
+                self.show_label(
+                    _("No installed games matching '%s' found. Press Ctrl+I to show uninstalled games.") % filter_text)
+            elif self.filters.get("hidden") is False:  # but not if missing!
+                self.show_label(_("No visible games matching '%s' found. Press Ctrl+H to show hidden games.") %
+                                filter_text)
+            else:
+                self.show_label(_("No games matching '%s' found ") % filter_text)
         else:
             if self.filters.get("category") == "favorite":
                 self.show_label(_("Add games to your favorites to see them here."))
             elif self.filters.get("installed"):
-                self.show_label(_("No installed games found. Press Ctrl+H so show all games."))
-            # Splash screen disabled because unfinished.
-            # elif (
-            #     not self.filters.get("runner")
-            #     and not self.filters.get("service")
-            #     and not self.filters.get("platform")
-            # ):
-            #     self.show_splash()
+                self.show_label(_("No installed games found. Press Ctrl+I to show uninstalled games."))
+            elif self.filters.get("hidden") is False:  # but not if missing!
+                self.show_label(_("No visible games found. Press Ctrl+H to show hidden games."))
+            elif (
+                not self.filters.get("runner")
+                and not self.filters.get("service")
+                and not self.filters.get("platform")
+            ):
+                self.show_splash()
             else:
                 self.show_label(_("No games found"))
 
     def update_store(self, *_args, **_kwargs):
         self.game_store.store.clear()
-        for child in self.blank_overlay.get_children():
-            child.destroy()
+        self.hide_overlay()
         games = self.get_games_from_filters()
         logger.debug("Showing %d games", len(games))
         self.view.service = self.service.id if self.service else None
@@ -468,8 +477,7 @@ class LutrisWindow(Gtk.ApplicationWindow):  # pylint: disable=too-many-public-me
             media_index = media_services.index(service.default_format)
         icon_type = media_services[media_index]
         if icon_type != self.icon_type:
-            self.save_icon_type(icon_type)
-            self.show_spinner()
+            GLib.idle_add(self.save_icon_type, icon_type)
 
     def show_overlay(self, widget, halign=Gtk.Align.FILL, valign=Gtk.Align.FILL):
         """Display a widget in the blank overlay"""
@@ -485,9 +493,19 @@ class LutrisWindow(Gtk.ApplicationWindow):  # pylint: disable=too-many-public-me
         self.show_overlay(Gtk.Label(message, visible=True))
 
     def show_splash(self):
-        image = Gtk.Image(visible=True)
-        image.set_from_file(os.path.join(datapath.get(), "media/splash.svg"))
-        self.show_overlay(image, Gtk.Align.START, Gtk.Align.START)
+        theme = "dark" if self.application.style_manager.is_dark else "light"
+        side_splash = Gtk.Image(visible=True)
+        side_splash.set_from_file(os.path.join(datapath.get(), "media/side-%s.svg" % theme))
+        side_splash.set_alignment(0, 0)
+
+        center_splash = Gtk.Image(visible=True)
+        center_splash.set_alignment(.5, .5)
+        center_splash.set_from_file(os.path.join(datapath.get(), "media/splash-%s.svg" % theme))
+
+        splash_box = Gtk.HBox(visible=True, margin_top=24)
+        splash_box.pack_start(side_splash, False, False, 12)
+        splash_box.set_center_widget(center_splash)
+        self.show_overlay(splash_box, Gtk.Align.FILL, Gtk.Align.FILL)
 
     def show_spinner(self):
         spinner = Gtk.Spinner(visible=True)
@@ -571,7 +589,6 @@ class LutrisWindow(Gtk.ApplicationWindow):  # pylint: disable=too-many-public-me
         for child in self.games_scrollwindow.get_children():
             child.destroy()
         self.games_scrollwindow.add(self.view)
-
         self.view.show_all()
         self.update_store()
 
@@ -588,6 +605,24 @@ class LutrisWindow(Gtk.ApplicationWindow):  # pylint: disable=too-many-public-me
         if self.service and service.id == self.service.id:
             self.emit("view-updated")
         return True
+
+    def save_window_state(self):
+        """Saves the window's size position and state as settings."""
+        width, height = self.window_size
+        settings.write_setting("width", width)
+        settings.write_setting("height", height)
+        if self.window_x and self.window_y:
+            settings.write_setting("window_x", self.window_x)
+            settings.write_setting("window_y", self.window_y)
+        settings.write_setting("maximized", self.maximized)
+
+    def restore_window_position(self):
+        """Restores the window position only; we call this when showing
+        the window, but restore the other settings only when creating it."""
+        self.window_x = settings.read_setting("window_x")
+        self.window_y = settings.read_setting("window_y")
+        if self.window_x and self.window_y:
+            self.move(int(self.window_x), int(self.window_y))
 
     def on_service_login(self, service):
         AsyncCall(service.reload, None)
@@ -627,14 +662,13 @@ class LutrisWindow(Gtk.ApplicationWindow):  # pylint: disable=too-many-public-me
         for stopper in self.threads_stoppers:
             stopper()
 
-        # Save settings
-        width, height = self.window_size
-        settings.write_setting("width", width)
-        settings.write_setting("height", height)
-        if self.window_x and self.window_y:
-            settings.write_setting("window_x", self.window_x)
-            settings.write_setting("window_y", self.window_y)
-        settings.write_setting("maximized", self.maximized)
+    @GtkTemplate.Callback
+    def on_hide(self, *_args):
+        self.save_window_state()
+
+    @GtkTemplate.Callback
+    def on_show(self, *_args):
+        self.restore_window_position()
 
     @GtkTemplate.Callback
     def on_preferences_activate(self, *_args):
@@ -653,7 +687,7 @@ class LutrisWindow(Gtk.ApplicationWindow):  # pylint: disable=too-many-public-me
         if self.search_timer_id:
             GLib.source_remove(self.search_timer_id)
         self.filters["text"] = entry.get_text().lower().strip()
-        self.search_timer_id = GLib.timeout_add(150, self.update_store)
+        self.search_timer_id = GLib.timeout_add(500, self.update_store)
 
     @GtkTemplate.Callback
     def on_search_entry_key_press(self, widget, event):
@@ -783,6 +817,13 @@ class LutrisWindow(Gtk.ApplicationWindow):  # pylint: disable=too-many-public-me
                 self.update_store()
         else:
             logger.debug("Can't get DB game for %s (service: %s)", game, self.service)
+
+        # If the update took the row out of this view's category, we'll need
+        # to update the view to reflect that.
+        selected_row = self.sidebar.get_selected_row()
+        if selected_row and selected_row.type == "category" and \
+                selected_row.id != "all" and selected_row.id not in game.get_categories():
+            self.game_store.remove_game(game.id)
         return True
 
     def on_game_stopped(self, game):

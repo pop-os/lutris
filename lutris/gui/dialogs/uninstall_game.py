@@ -39,7 +39,7 @@ class UninstallGameDialog(Dialog):
         elif len(get_games(filters={"directory": self.game.directory})) > 1:
             self.folder_label.set_markup(
                 _("The folder %s is used by other games and will be kept.") % self.game.directory)
-        elif is_removeable(self.game.directory):
+        elif is_removeable(self.game.directory, self.game.config.system_config):
             self.delete_button.set_sensitive(False)
             self.folder_label.set_markup(_("<i>Calculating size…</i>"))
             AsyncCall(get_disk_size, self.folder_size_cb, self.game.directory)
@@ -62,7 +62,6 @@ class UninstallGameDialog(Dialog):
         button_box.add(cancel_button)
         button_box.add(self.delete_button)
         container.pack_end(button_box, False, False, 0)
-        self.show()
 
     def folder_size_cb(self, folder_size, error):
         if error:
@@ -89,6 +88,7 @@ class UninstallGameDialog(Dialog):
         if self.delete_files and not hasattr(self.game.runner, "no_game_remove_warning"):
             dlg = QuestionDialog(
                 {
+                    "parent": self,
                     "question": _(
                         "Please confirm.\nEverything under <b>%s</b>\n"
                         "will be deleted."
@@ -141,7 +141,6 @@ class RemoveGameDialog(Dialog):
 
         button_box.add(self.remove_button)
         container.pack_end(button_box, False, False, 0)
-        self.show()
 
     def on_close(self, _button):
         self.destroy()

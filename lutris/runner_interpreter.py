@@ -10,8 +10,10 @@ from lutris.util.log import logger
 
 def get_mangohud_conf(system_config):
     """Return correct launch arguments and environment variables for Mangohud."""
+    # The environment variable should be set to 0 on gamescope, otherwise the game will crash
+    mangohud_val = "0" if system_config.get("gamescope") else "1"
     if system_config.get("mangohud") and system.find_executable("mangohud"):
-        return ["mangohud"], {"MANGOHUD": "1", "MANGOHUD_DLSYM": "1"}
+        return ["mangohud"], {"MANGOHUD": mangohud_val, "MANGOHUD_DLSYM": "1"}
     return None, None
 
 
@@ -27,6 +29,10 @@ def get_launch_parameters(runner, gameplay_info):
         logger.info("Game launched from steam (AppId: %s)", os.environ["SteamAppId"])
         env["LC_ALL"] = ""
 
+    # Set correct LC_ALL depending on user settings
+    if system_config["locale"] != "":
+        env["LC_ALL"] = system_config["locale"]
+
     # Optimus
     optimus = system_config.get("optimus")
     if optimus == "primusrun" and system.find_executable("primusrun"):
@@ -38,6 +44,7 @@ def get_launch_parameters(runner, gameplay_info):
     elif optimus == "pvkrun" and system.find_executable("pvkrun"):
         launch_arguments.insert(0, "pvkrun")
 
+    # MangoHud
     mango_args, mango_env = get_mangohud_conf(system_config)
     if mango_args:
         launch_arguments = mango_args + launch_arguments

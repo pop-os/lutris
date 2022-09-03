@@ -4,6 +4,7 @@ from gettext import gettext as _
 
 from gi.repository import GLib, Gtk
 
+from lutris.config import LutrisConfig
 from lutris.exceptions import UnavailableGame
 from lutris.game import Game
 from lutris.gui.dialogs import DirectoryDialog, InstallerSourceDialog, QuestionDialog
@@ -19,6 +20,7 @@ from lutris.util import xdgshortcuts
 from lutris.util.log import logger
 from lutris.util.steam import shortcut as steam_shortcut
 from lutris.util.strings import add_url_tags, gtk_safe, human_size
+from lutris.util.system import is_removeable
 
 
 class InstallerWindow(BaseApplicationWindow):  # pylint: disable=too-many-public-methods
@@ -480,7 +482,7 @@ class InstallerWindow(BaseApplicationWindow):  # pylint: disable=too-many-public
         if game_id:
             game = Game(game_id)
             if self.config.get("create_steam_shortcut"):
-                steam_shortcut.update_shortcut(game)
+                steam_shortcut.create_shortcut(game)
             game.save()
 
         self.install_in_progress = False
@@ -551,15 +553,21 @@ class InstallerWindow(BaseApplicationWindow):  # pylint: disable=too-many-public
 
     def confirm_cancel(self, _widget=None):
         """Ask a confirmation before cancelling the install"""
+        widgets = []
+
         remove_checkbox = Gtk.CheckButton.new_with_label(_("Remove game files"))
-        if self.interpreter and self.interpreter.target_path:
+        if self.interpreter and self.interpreter.target_path and \
+                is_removeable(self.interpreter.target_path, LutrisConfig().system_config):
             remove_checkbox.set_active(self.interpreter.game_dir_created)
             remove_checkbox.show()
+            widgets.append(remove_checkbox)
+
         confirm_cancel_dialog = QuestionDialog(
             {
+                "parent": self,
                 "question": _("Are you sure you want to cancel the installation?"),
                 "title": _("Cancel installation?"),
-                "widgets": [remove_checkbox]
+                "widgets": widgets
             }
         )
         if confirm_cancel_dialog.result != Gtk.ResponseType.YES:

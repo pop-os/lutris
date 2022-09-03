@@ -376,8 +376,7 @@ class wine(Runner):
                 "default": False,
                 "help": _(
                     "Enables the Windows application's DPI scaling.\n"
-                    "Otherwise, disables DPI scaling by using 96 DPI.\n"
-                    "This corresponds to Wine's Screen Resolution option."
+                    "Otherwise, the Screen Resolution option in 'Wine configuration' controls this."
                 ),
             },
             {
@@ -488,17 +487,15 @@ class wine(Runner):
     @property
     def context_menu_entries(self):
         """Return the contexual menu entries for wine"""
-        menu_entries = [("wineexec", _("Run EXE inside Wine prefix"), self.run_wineexec)]
-        if "Proton" not in self.get_version():
-            menu_entries.append(("winecfg", _("Wine configuration"), self.run_winecfg))
-        menu_entries += [
+        return [
+            ("wineexec", _("Run EXE inside Wine prefix"), self.run_wineexec),
+            ("winecfg", _("Wine configuration"), self.run_winecfg),
             ("wineshell", _("Open Bash terminal"), self.run_wine_terminal),
             ("wineconsole", _("Open Wine console"), self.run_wineconsole),
             ("wine-regedit", _("Wine registry"), self.run_regedit),
             ("winetricks", _("Winetricks"), self.run_winetricks),
             ("winecpl", _("Wine Control Panel"), self.run_winecpl),
         ]
-        return menu_entries
 
     @property
     def prefix_path(self):
@@ -654,6 +651,7 @@ class wine(Runner):
             working_dir=self.prefix_path,
             config=self,
             env=self.get_env(os_env=True),
+            runner=self
         )
 
     def run_wineexec(self, *args):
@@ -679,6 +677,7 @@ class wine(Runner):
             arch=self.wine_arch,
             config=self,
             env=self.get_env(os_env=True),
+            runner=self
         )
 
     def run_regedit(self, *args):
@@ -698,8 +697,21 @@ class wine(Runner):
     def run_winetricks(self, *args):
         """Run winetricks in the current context"""
         self.prelaunch()
+        disable_runtime = not self.use_runtime()
+        system_winetricks = self.runner_config.get("system_winetricks")
+        if system_winetricks:
+            # Don't run the system winetricks with the runtime; let the
+            # system be the system
+            disable_runtime = True
         winetricks(
-            "", prefix=self.prefix_path, wine_path=self.get_executable(), config=self, env=self.get_env(os_env=True)
+            "",
+            prefix=self.prefix_path,
+            wine_path=self.get_executable(),
+            config=self,
+            disable_runtime=disable_runtime,
+            system_winetricks=system_winetricks,
+            env=self.get_env(os_env=True, disable_runtime=disable_runtime),
+            runner=self
         )
 
     def run_winecpl(self, *args):
@@ -751,19 +763,19 @@ class wine(Runner):
         prefix_manager.set_dpi(self.get_dpi())
 
     def get_dpi(self):
-        """Return the DPI to be used by Wine; returns 96 to disable scaling,
-        as this is Window's unscaled default DPI."""
+        """Return the DPI to be used by Wine; returns None to allow Wine's own
+        setting to govern."""
         if bool(self.runner_config.get("Dpi")):
             explicit_dpi = self.runner_config.get("ExplicitDpi")
             if explicit_dpi == "auto":
                 explicit_dpi = None
             try:
                 explicit_dpi = int(explicit_dpi)
-            except ValueError:
+            except:
                 explicit_dpi = None
             return explicit_dpi or get_default_dpi()
 
-        return 96
+        return None
 
     def setup_dlls(self, manager_class, enable, version):
         """Enable or disable DLLs"""
@@ -790,7 +802,7 @@ class wine(Runner):
     def prelaunch(self):
         if not system.path_exists(os.path.join(self.prefix_path, "user.reg")):
             logger.warning("No valid prefix detected in %s, creating one...", self.prefix_path)
-            create_prefix(self.prefix_path, wine_path=self.get_executable(), arch=self.wine_arch)
+            create_prefix(self.prefix_path, wine_path=self.get_executable(), arch=self.wine_arch, runner=self)
 
         prefix_manager = WinePrefixManager(self.prefix_path)
         if self.runner_config.get("autoconf_joypad", False):
@@ -823,7 +835,6 @@ class wine(Runner):
             bool(self.runner_config.get("dgvoodoo2")),
             self.runner_config.get("dgvoodoo2_version")
         )
-        return True
 
     def get_dll_overrides(self):
         """Return the DLLs overriden at runtime"""
@@ -836,14 +847,12 @@ class wine(Runner):
             overrides = {}
         return overrides
 
-    def get_env(self, os_env=False):
+    def get_env(self, os_env=False, disable_runtime=False):
         """Return environment variables used by the game"""
         # Always false to runner.get_env, the default value
         # of os_env is inverted in the wine class,
         # the OS env is read later.
-        env = super().get_env(False)
-        if os_env:
-            env.update(os.environ.copy())
+        env = super().get_env(os_env, disable_runtime=disable_runtime)
         show_debug = self.runner_config.get("show_debug", "-all")
         if show_debug != "inherit":
             env["WINEDEBUG"] = show_debug
@@ -935,7 +944,7 @@ class wine(Runner):
             # Set this to 1 to enable access to more RAM for 32bit applications
             launch_info["env"]["WINE_LARGE_ADDRESS_AWARE"] = "1"
             if not is_vulkan_supported():
-                if not display_vulkan_error(True):
+                if not display_vulkan_error(on_launch=True):
                     return {"error": "VULKAN_NOT_FOUND"}
 
         if not game_exe or not system.path_exists(game_exe):

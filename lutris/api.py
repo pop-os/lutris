@@ -2,9 +2,11 @@
 import json
 import os
 import re
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import OrderedDict
 
 import requests
 
@@ -76,8 +78,17 @@ def get_user_info():
 def get_runners(runner_name):
     """Return the available runners for a given runner name"""
     api_url = settings.SITE_URL + "/api/runners/" + runner_name
-    response = http.Request(api_url).get()
-    return response.json
+    host = settings.SITE_URL.split("//")[1]
+
+    answers = socket.getaddrinfo(host, 443)
+    (_family, _type, _proto, _canonname, _sockaddr) = answers[0]
+    headers = OrderedDict({
+        'Host': host
+    })
+    session = requests.Session()
+    session.headers = headers
+    response = session.get(api_url, headers=headers)
+    return response.json()
 
 
 def get_http_response(url, payload):
@@ -164,10 +175,29 @@ def get_game_installers(game_slug, revision=None):
     if response is None:
         raise RuntimeError("Couldn't get installer at %s" % installer_url)
 
-    if not revision:
-        return response["results"]
     # Revision requests return a single installer
-    return [response]
+    if revision:
+        installers = [response]
+    else:
+        installers = response["results"]
+    return [normalize_installer(i) for i in installers]
+
+
+def normalize_installer(installer):
+    """Adjusts an installer dict so it is in the correct form, with values
+    of the expected types."""
+    def must_be_str(key):
+        if key in installer:
+            installer[key] = str(installer[key])
+
+    must_be_str("name")
+    must_be_str("version")
+    must_be_str("os")
+    must_be_str("slug")
+    must_be_str("game_slug")
+    must_be_str("dlcid")
+    must_be_str("runner")
+    return installer
 
 
 def search_games(query):

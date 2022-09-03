@@ -25,6 +25,8 @@
     <property name="title" translatable="yes">Lutris</property>
     <property name="icon-name">lutris</property>
     <signal name="destroy" handler="on_destroy" swapped="no"/>
+    <signal name="hide" handler="on_hide" swapped="no"/>
+    <signal name="show" handler="on_show" swapped="no"/>
     <signal name="size-allocate" handler="on_resize" swapped="no"/>
     <child>
       <object class="GtkStack">
@@ -96,8 +98,6 @@
                       <object class="GtkAlignment" id="blank_overlay">
                         <property name="visible">True</property>
                         <property name="can-focus">False</property>
-                        <property name="xscale">0.10000000149011612</property>
-                        <property name="yscale">0.10000000149011612</property>
                         <child>
                           <placeholder/>
                         </child>
@@ -296,7 +296,7 @@
               <object class="GtkLabel" id="zoom_label">
                 <property name="visible">True</property>
                 <property name="can-focus">False</property>
-                <property name="label" translatable="yes">Zoom:</property>
+                <property name="label" translatable="yes">Zoom </property>
               </object>
               <packing>
                 <property name="expand">False</property>
@@ -454,7 +454,7 @@
             <property name="receives-default">False</property>
             <property name="action-name">win.show-installed-only</property>
             <property name="text" translatable="yes">_Installed Games Only</property>
-            <accelerator key="h" signal="clicked" modifiers="GDK_CONTROL_MASK"/>
+            <accelerator key="i" signal="clicked" modifiers="GDK_CONTROL_MASK"/>
           </object>
           <packing>
             <property name="expand">False</property>
@@ -469,6 +469,7 @@
             <property name="receives-default">False</property>
             <property name="action-name">win.show-hidden-games</property>
             <property name="text" translatable="yes">Show _Hidden Games</property>
+            <accelerator key="h" signal="clicked" modifiers="GDK_CONTROL_MASK"/>
           </object>
           <packing>
             <property name="expand">False</property>
