@@ -6,7 +6,7 @@
 %global appid net.lutris.Lutris
 
 Name:           lutris
-Version:        0.5.11
+Version:        0.5.12
 Release:        7%{?dist}
 Summary:        Video game preservation platform
 
@@ -43,7 +43,7 @@ BuildRequires:  hicolor-icon-theme
 BuildRequires:  python3-setuptools
 Requires:       (python3-gobject-Gdk or python3-gobject)
 Requires:       python3-PyYAML, cabextract, typelib-1_0-Gtk-3_0
-Requires:       typelib-1_0-GnomeDesktop-3_0, typelib-1_0-WebKit2-4_0, typelib-1_0-Notify-0_7
+Requires:       typelib-1_0-GnomeDesktop-3_0, typelib-1_0-WebKit2-4_1
 Requires:       fluid-soundfont-gm, python3-Pillow, python3-requests
 %endif
 

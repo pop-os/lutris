@@ -144,9 +144,9 @@ class ServiceSidebarRow(SidebarRow):
         if error:
             if isinstance(error, AuthTokenExpired):
                 self.service.logout()
-                self.service.login()
+                self.service.login(parent=self.get_toplevel())
             else:
-                ErrorDialog(str(error))
+                ErrorDialog(str(error), parent=self.get_toplevel())
         GLib.timeout_add(2000, self.enable_refresh_button)
 
     def enable_refresh_button(self):
@@ -179,7 +179,7 @@ class OnlineServiceSidebarRow(ServiceSidebarRow):
         if self.service.is_authenticated():
             self.service.logout()
         else:
-            self.service.login()
+            self.service.login(parent=self.get_toplevel())
         self.create_button_box()
 
 
@@ -212,7 +212,8 @@ class RunnerSidebarRow(SidebarRow):
     def on_manage_versions(self, *_args):
         """Manage runner versions"""
         dlg_title = _("Manage %s versions") % self.runner.name
-        RunnerInstallDialog(dlg_title, self.get_toplevel(), self.runner.name)
+        self.application.show_window(RunnerInstallDialog, title=dlg_title,
+                                     runner=self.runner, parent=self.get_toplevel())
 
 
 class SidebarHeader(Gtk.Box):
