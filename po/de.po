@@ -22,7 +22,7 @@ msgstr "Lutris"
 
 #: share/applications/net.lutris.Lutris.desktop:4
 msgid "video game preservation platform"
-msgstr "Die Bewahrungsplattform für Videospiele"
+msgstr "Die Plattform zur Archivierung von Videospielen"
 
 #: share/applications/net.lutris.Lutris.desktop:6
 msgid "gaming;wine;emulator;"
@@ -31,7 +31,7 @@ msgstr "gaming;spielen;wine;emulator;"
 #: share/metainfo/net.lutris.Lutris.metainfo.xml:11
 #: share/lutris/ui/about-dialog.ui:18
 msgid "Video game preservation platform"
-msgstr "Die Bewahrungsplattform für Videospiele"
+msgstr "Die Plattform zur Archivierung von Videospielen"
 
 #: share/metainfo/net.lutris.Lutris.metainfo.xml:14
 msgid "Main window"
@@ -85,7 +85,7 @@ msgstr ""
 
 #: share/lutris/ui/dialog-lutris-login.ui:8
 msgid "Connect to lutris.net"
-msgstr "Verbinde mit lutris.net"
+msgstr "Mit lutris.net verbinden"
 
 #: share/lutris/ui/dialog-lutris-login.ui:26
 msgid "Forgot password?"
@@ -377,7 +377,7 @@ msgstr "Spiel könnte nicht wie erwartet funktionieren"
 #: lutris/game.py:342
 msgid "Unable to find Xephyr, install it or disable the Xephyr option"
 msgstr ""
-"Konnte Xephyr nicht finden, installieren Sie es oder deaktivieren Sie "
+"Xephyr konnte nicht gefunden werden, installieren Sie es oder deaktivieren Sie "
 "die Xephyr-Option"
 
 #: lutris/game.py:398
@@ -467,7 +467,7 @@ msgstr "<b>Durchsuche Lutris.net</b>"
 
 #: lutris/gui/addgameswindow.py:149
 msgid "Select folder to scan"
-msgstr "Ordner zum Durchsuchen lassen auswählen"
+msgstr "Ordner zum Durchsuchen auswählen"
 
 #: lutris/gui/addgameswindow.py:223
 msgid "No results"
@@ -537,7 +537,7 @@ msgstr ""
 
 #: lutris/gui/application.py:115
 msgid "Print the version of Lutris and exit"
-msgstr "Die Version von Lutris ausgeben und beenden"
+msgstr "Die Version von Lutris anzeigen und beenden"
 
 #: lutris/gui/application.py:123
 msgid "Show debug messages"
