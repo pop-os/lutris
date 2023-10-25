@@ -30,6 +30,7 @@ from lutris.util.graphics.xrandr import turn_off_except
 from lutris.util.log import LOG_BUFFERS, logger
 from lutris.util.process import Process
 from lutris.util.savesync import sync_saves
+from lutris.util.steam.shortcut import remove_shortcut as remove_steam_shortcut
 from lutris.util.timer import Timer
 from lutris.util.yaml import write_yaml_to_file
 
@@ -382,6 +383,7 @@ class Game(GObject.Object):
         if self.config:
             self.config.remove()
         xdgshortcuts.remove_launcher(self.slug, self.id, desktop=True, menu=True)
+        remove_steam_shortcut(self)
         if delete_files and self.runner:
             # self.directory here, not self.resolve_game_path; no guessing at
             # directories when we delete them
@@ -394,6 +396,8 @@ class Game(GObject.Object):
             log_buffer = LOG_BUFFERS[str(self.id)]
             log_buffer.delete(log_buffer.get_start_iter(), log_buffer.get_end_iter())
 
+        if not self.playtime:
+            return self.delete(no_signal=no_signal)
         if no_signal:
             return
         self.emit("game-removed")
@@ -721,8 +725,10 @@ class Game(GObject.Object):
 
         # Game is running, let's update discord status
         if settings.read_setting('discord_rpc') == 'True' and self.discord_id:
-            logger.info("Updating Discord RPC Status")
-            discord.client.update(self.discord_id)
+            try:
+                discord.client.update(self.discord_id)
+            except AssertionError:
+                pass
 
         self.heartbeat = GLib.timeout_add(HEARTBEAT_DELAY, self.beat)
         with open(self.now_playing_path, "w", encoding="utf-8") as np_file:
@@ -921,7 +927,6 @@ class Game(GObject.Object):
 
         # Clear Discord Client Status
         if settings.read_setting('discord_rpc') == 'True' and self.discord_id:
-            logger.debug("Clearing Discord RPC")
             discord.client.clear()
 
         self.process_return_codes()

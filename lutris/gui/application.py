@@ -1,4 +1,5 @@
 # pylint: disable=wrong-import-position
+# pylint: disable=too-many-lines
 #
 # Copyright (C) 2009 Mathieu Comandon <mathieucomandon@gmail.com>
 #
@@ -422,15 +423,7 @@ class Application(Gtk.Application):
         if not argc:
             # Switch back the log output to stderr (the default in Python)
             # to avoid messing with any output from command line options.
-
-            # Use when targeting Python 3.7 minimum
-            # console_handler.setStream(sys.stderr)
-
-            # Until then...
-            logger.removeHandler(log.console_handler)
-            log.console_handler = logging.StreamHandler(stream=sys.stdout)
-            log.console_handler.setFormatter(log.SIMPLE_FORMATTER)
-            logger.addHandler(log.console_handler)
+            log.console_handler.setStream(sys.stderr)
 
         # Set up logger
         if options.contains("debug"):
@@ -440,6 +433,7 @@ class Application(Gtk.Application):
         if options.contains("force"):
             self.force_updates = True
 
+        logger.info("Starting Lutris %s", settings.VERSION)
         init_lutris()
 
         # Perform migrations early if any command line options
@@ -453,7 +447,6 @@ class Application(Gtk.Application):
             migrate()
 
         gpu_info = run_all_checks()
-
         if options.contains("dest"):
             dest_dir = options.lookup_value("dest").get_string()
         else:
@@ -490,7 +483,8 @@ class Application(Gtk.Application):
             game_list = games_db.get_games(filters={"installed": 1})
             service_game_list = ServiceGameCollection.get_service_games()
             for game in service_game_list:
-                game['installed'] = any(('service_id', game['appid']) in item.items() for item in game_list if item['service'] == game['service'])
+                game['installed'] = any(('service_id', game['appid']) in item.items() for item in game_list if
+                                        item['service'] == game['service'])
             if options.contains("installed"):
                 service_game_list = [d for d in service_game_list if d['installed']]
             if options.contains("json"):
@@ -515,7 +509,7 @@ class Application(Gtk.Application):
             return 0
 
         # List Wine Runners
-        if options.contains("list-wine-runners"):
+        if options.contains("list-wine-versions"):
             self.print_wine_runners()
             return 0
 
@@ -557,8 +551,8 @@ class Application(Gtk.Application):
             IssueReportWindow(application=self)
             return 0
 
+        url = options.lookup_value(GLib.OPTION_REMAINING)
         try:
-            url = options.lookup_value(GLib.OPTION_REMAINING)
             installer_info = self.get_lutris_action(url)
         except ValueError:
             self._print(command_line, _("%s is not a valid URI") % url.get_strv())
@@ -991,7 +985,7 @@ class Application(Gtk.Application):
         else:
             print(f"""
 Specified version of Wine is not installed: {version}.
-Please check if the Wine Runner and specified version are installed (for that use --list-wine-runners).
+Please check if the Wine Runner and specified version are installed (for that use --list-wine-versions).
 Also, check that the version specified is in the correct format.
                 """)
 

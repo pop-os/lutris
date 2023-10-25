@@ -457,6 +457,8 @@ def path_exists(path, check_symlinks=False, exclude_empty=False):
     """
     if not path:
         return False
+    if path.startswith("~"):
+        path = os.path.expanduser(path)
     if os.path.exists(path):
         if exclude_empty:
             return os.stat(path).st_size > 0
@@ -595,6 +597,8 @@ def get_vulkan_gpu_name(icd_files, use_dri_prime):
         if icd_files:
             subprocess_env["VK_DRIVER_FILES"] = icd_files
             subprocess_env["VK_ICD_FILENAMES"] = icd_files
+        # How is prime going to be useful in case
+        # of full AMD setups or AMD + Intel setups?
         if prime:
             subprocess_env["DRI_PRIME"] = "1"
 

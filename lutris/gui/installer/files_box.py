@@ -2,7 +2,6 @@ from gi.repository import GObject, Gtk
 
 from lutris.gui.installer.file_box import InstallerFileBox
 from lutris.util.log import logger
-from lutris.installer.installer_file_collection import InstallerFileCollection
 
 
 class InstallerFilesBox(Gtk.ListBox):
@@ -117,11 +116,7 @@ class InstallerFilesBox(Gtk.ListBox):
 
     def get_game_files(self):
         """Return a mapping of the local files usable by the interpreter"""
-        out = {}
+        files = {}
         for installer_file in self.installer.files:
-            if isinstance(installer_file, InstallerFileCollection):
-                for file in installer_file.files_list:
-                    out.update({file.id: file.dest_file})
-            else:
-                out.update({installer_file.id: installer_file.dest_file})
-        return out
+            files.update(installer_file.get_dest_files_by_id())
+        return files

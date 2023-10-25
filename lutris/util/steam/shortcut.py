@@ -6,28 +6,35 @@ import shlex
 import shutil
 
 from lutris.api import format_installer_url
-from lutris.game import Game
 from lutris.util import resources, system
 from lutris.util.log import logger
 from lutris.util.steam import vdf
-from lutris.util.steam.config import search_recursive_in_steam_dirs
+from lutris.util.steam.config import convert_steamid64_to_steamid32, get_active_steamid64, get_user_data_dirs
 
 
-def get_config_path():
-    config_paths = search_recursive_in_steam_dirs("userdata/**/config/")
-    if not config_paths:
-        return None
-    return config_paths[0]
+def get_config_path() -> str:
+    """Return config path for a Steam user"""
+    userdatapath, user_ids = get_user_data_dirs()
+    if not user_ids:
+        return ""
+    user_id = user_ids[0]
+    if len(user_ids) > 1:
+        active_account = get_active_steamid64()
+        if active_account:
+            active_account32 = convert_steamid64_to_steamid32(active_account)
+            if active_account32 in user_ids:
+                user_id = active_account32
+    return os.path.join(userdatapath, user_id, "config")
 
 
-def get_shortcuts_vdf_path():
+def get_shortcuts_vdf_path() -> str:
     config_path = get_config_path()
     if not config_path:
-        return None
+        return ""
     return os.path.join(config_path, "shortcuts.vdf")
 
 
-def vdf_file_exists():
+def vdf_file_exists() -> bool:
     try:
         return bool(get_shortcuts_vdf_path())
     except Exception as ex:
@@ -101,6 +108,9 @@ def remove_shortcut(game):
     with open(shortcut_path, "rb") as shortcut_file:
         shortcuts = vdf.binary_loads(shortcut_file.read())['shortcuts'].values()
     other_shortcuts = [s for s in shortcuts if not matches_id(s, game)]
+    # Quit early if no shortcut is removed
+    if len(shortcuts) == len(other_shortcuts):
+        return
     updated_shortcuts = {
         'shortcuts': {
             str(index): elem for index, elem in enumerate(other_shortcuts)
@@ -183,21 +193,3 @@ def set_artwork(game):
             logger.debug("Copied %s cover to %s", game, target_banner)
         except FileNotFoundError as ex:
             logger.error("Failed to copy banner to %s: %s", target_banner, ex)
-
-
-def update_all_artwork():
-    try:
-        shortcut_path = get_shortcuts_vdf_path()
-        if not system.path_exists(shortcut_path):
-            return
-        with open(shortcut_path, "rb") as shortcut_file:
-            shortcuts = vdf.binary_loads(shortcut_file.read())['shortcuts'].values()
-        for shortcut in shortcuts:
-            id_match = re.match(r".*lutris:rungameid/(\d+)", shortcut["LaunchOptions"])
-            if not id_match:
-                continue
-            game_id = int(id_match.groups()[0])
-            game = Game(game_id)
-            set_artwork(game)
-    except Exception as ex:
-        logger.error("Failed to update steam shortcut artwork: %s", ex)

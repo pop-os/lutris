@@ -3,7 +3,7 @@ from gettext import gettext as _
 
 from gi.repository import Gio, GLib, Gtk
 
-from lutris import api
+from lutris import api, sysoptions
 from lutris.exceptions import watch_errors
 from lutris.gui.config.add_game_dialog import AddGameDialog
 from lutris.gui.dialogs import ErrorDialog, ModelessDialog
@@ -14,7 +14,6 @@ from lutris.installer import AUTO_WIN32_EXE, get_installers
 from lutris.scanners.lutris import scan_directory
 from lutris.util.jobs import AsyncCall
 from lutris.util.strings import gtk_safe, slugify
-from lutris import sysoptions
 
 
 class AddGamesWindow(ModelessDialog):  # pylint: disable=too-many-public-methods
@@ -320,7 +319,7 @@ class AddGamesWindow(ModelessDialog):  # pylint: disable=too-many-public-methods
         self.scan_directory_chooser.set_hexpand(True)
 
         explanation = _(
-            "This folder will be scanned for games previously installed with Lutrus.\n\n"
+            "This folder will be scanned for games previously installed with Lutris.\n\n"
             "Folder names have to match their corresponding Lutris ID, each matching ID"
             "will be queried for existing install script to provide for exe locations.\n\n"
             "Click 'Continue' to start scanning and import games"

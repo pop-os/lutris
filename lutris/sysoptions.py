@@ -158,8 +158,7 @@ system_options = [  # pylint: disable=invalid-name
         "default": False,
         "condition": bool(system.find_executable("gamescope")),
         "help": _("Always use relative mouse mode instead of flipping\n"
-                  "dependent on cursor visibility (--force-grab-cursor).\n"
-                  "(Since gamescope git commit 054458f, Jan 12, 2023)"),
+                  "dependent on cursor visibility"),
     },
     {
         "section": "Gamescope",
@@ -169,10 +168,9 @@ system_options = [  # pylint: disable=invalid-name
         "choices": DISPLAY_MANAGER.get_resolutions,
         "advanced": True,
         "condition": bool(system.find_executable("gamescope")),
-        "help": _("Set the resolution used by gamescope (-W, -H).\n"
+        "help": _("Set the resolution used by gamescope.\n"
                   "Resizing the gamescope window will update these settings.\n"
                   "\n"
-                  "<b>Empty string:</b> Disabled\n"
                   "<b>Custom Resolutions:</b> (width)x(height)"),
     },
     {
@@ -183,9 +181,8 @@ system_options = [  # pylint: disable=invalid-name
         "advanced": True,
         "choices": DISPLAY_MANAGER.get_resolutions,
         "condition": bool(system.find_executable("gamescope")),
-        "help": _("Set the maximum resolution used by the game (-w, -h).\n"
+        "help": _("Set the maximum resolution used by the game.\n"
                   "\n"
-                  "<b>Empty string:</b> Disabled\n"
                   "<b>Custom Resolutions:</b> (width)x(height)"),
     },
     {
@@ -202,7 +199,7 @@ system_options = [  # pylint: disable=invalid-name
         "default": "-f",
         "condition": bool(system.find_executable("gamescope")),
         "help": _("Run gamescope in fullscreen, windowed or borderless mode\n"
-                  "Toggle fullscreen (-f) : Super + F"),
+                  "Toggle fullscreen : Super + F"),
     },
     {
         "section": "Gamescope",
@@ -211,10 +208,8 @@ system_options = [  # pylint: disable=invalid-name
         "advanced": True,
         "type": "string",
         "condition": bool(system.find_executable("gamescope")),
-        "help": _("Use AMD FidelityFX™ Super Resolution 1.0 for upscaling (-U).\n"
-                  "Upscaler sharpness from 0 (max) to 20 (min).\n"
-                  "\n"
-                  "<b>Empty string:</b> Disabled"),
+        "help": _("Use AMD FidelityFX™ Super Resolution 1.0 for upscaling.\n"
+                  "Upscaler sharpness from 0 (max) to 20 (min)."),
     },
     {
         "section": "Gamescope",
@@ -223,9 +218,7 @@ system_options = [  # pylint: disable=invalid-name
         "advanced": True,
         "type": "string",
         "condition": bool(system.find_executable("gamescope")),
-        "help": _("Set a frame-rate limit for gamescope specified in frames per second (-r).\n"
-                  "\n"
-                  "<b>Empty string:</b> Disabled"),
+        "help": _("Set a frame-rate limit for gamescope specified in frames per second."),
     },
     {
         "section": "Gamescope",
@@ -235,9 +228,7 @@ system_options = [  # pylint: disable=invalid-name
         "type": "string",
         "condition": bool(system.find_executable("gamescope")),
         "help": _("Set additional flags for gamescope (if available).\n"
-                  "See 'gamescope --help' for a full list of options.\n"
-                  "\n"
-                  "<b>Empty String:</b> Disabled"),
+                  "See 'gamescope --help' for a full list of options."),
     },
     {
         "section": "CPU",

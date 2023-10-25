@@ -71,13 +71,11 @@ class GameGridView(Gtk.IconView, GameView):
 
     def _initialize_image_renderer_attributes(self):
         if self.image_renderer:
+            self.image_renderer.show_badges = self.show_badges
             self.clear_attributes(self.image_renderer)
             self.add_attribute(self.image_renderer, "game_id", COL_ID)
             self.add_attribute(self.image_renderer, "media_path", COL_MEDIA_PATH)
-            if self.show_badges:
-                self.add_attribute(self.image_renderer, "platform", COL_PLATFORM)
-            else:
-                self.image_renderer.platform = None
+            self.add_attribute(self.image_renderer, "platform", COL_PLATFORM)
             self.add_attribute(self.image_renderer, "is_installed", COL_INSTALLED)
 
     def select(self):
@@ -93,11 +91,7 @@ class GameGridView(Gtk.IconView, GameView):
 
     def on_item_activated(self, _view, _path):
         """Handles double clicks"""
-        selected_item = self.get_selected_item()
-        if selected_item:
-            selected_id = self.get_selected_id(selected_item)
-        else:
-            selected_id = None
+        selected_id = self.get_selected_game_id()
         logger.debug("Item activated: %s", selected_id)
         self.emit("game-activated", selected_id)
 
