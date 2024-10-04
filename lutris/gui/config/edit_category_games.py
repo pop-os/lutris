@@ -5,23 +5,23 @@ from gi.repository import Gtk
 
 from lutris.database import categories as categories_db
 from lutris.database import games as games_db
-from lutris.exceptions import watch_errors
 from lutris.game import Game
-from lutris.gui.dialogs import ErrorDialog, QuestionDialog, SavableModelessDialog
+from lutris.gui.dialogs import QuestionDialog, SavableModelessDialog
+from lutris.util.strings import get_natural_sort_key
 
 
 class EditCategoryGamesDialog(SavableModelessDialog):
     """Games assigned to category dialog."""
 
     def __init__(self, parent, category):
-        super().__init__(_("Configure %s") % category['name'], parent=parent, border_width=10)
+        super().__init__(_("Configure %s") % category["name"], parent=parent, border_width=10)
 
-        self.category = category['name']
-        self.category_id = category['id']
-        self.available_games = [Game(x['id']) for x in games_db.get_games(sorts=[("installed", "DESC"),
-                                                                                 ("name", "COLLATE NOCASE ASC")
-                                                                                 ])]
-        self.category_games = [Game(x) for x in categories_db.get_game_ids_for_category(self.category)]
+        self.category = category["name"]
+        self.category_id = category["id"]
+        self.available_games = sorted(
+            [Game(x["id"]) for x in games_db.get_games()], key=lambda g: (g.is_installed, get_natural_sort_key(g.name))
+        )
+        self.category_games = [Game(x) for x in categories_db.get_game_ids_for_categories([self.category])]
         self.grid = Gtk.Grid()
 
         self.set_default_size(500, 350)
@@ -60,14 +60,14 @@ class EditCategoryGamesDialog(SavableModelessDialog):
         frame.add(sw)
         return frame
 
-    @watch_errors()
     def on_delete_clicked(self, _button):
         dlg = QuestionDialog(
             {
                 "title": _("Do you want to delete the category '%s'?") % self.category,
                 "question": _(
-                    "This will permanently destroy the category, but the games themselves will not be deleted."),
-                "parent": self
+                    "This will permanently destroy the category, but the games themselves will not be deleted."
+                ),
+                "parent": self,
             }
         )
         if dlg.result == Gtk.ResponseType.YES:
@@ -75,7 +75,6 @@ class EditCategoryGamesDialog(SavableModelessDialog):
                 game.remove_category(self.category)
             self.destroy()
 
-    @watch_errors()
     def on_save(self, _button):
         """Save game info and destroy widget."""
         removed_games = []
@@ -87,7 +86,7 @@ class EditCategoryGamesDialog(SavableModelessDialog):
 
             for game_checkbox in self.grid.get_children():
                 label = game_checkbox.get_label()
-                game_id = games_db.get_game_by_field(label, 'name')['id']
+                game_id = games_db.get_game_by_field(label, "name")["id"]
                 if label in category_games_names:
                     if not game_checkbox.get_active():
                         removed_games.append(game_id)
@@ -110,9 +109,10 @@ class EditCategoryGamesDialog(SavableModelessDialog):
                     {
                         "title": _("Merge the category '%s' into '%s'?") % (self.category, new_name),
                         "question": _(
-                            "If you rename this category, it will be combined with '%s'. "
-                            "Do you want to merge them?") % new_name,
-                        "parent": self
+                            "If you rename this category, it will be combined with '%s'. " "Do you want to merge them?"
+                        )
+                        % new_name,
+                        "parent": self,
                     }
                 )
                 if dlg.result != Gtk.ResponseType.YES:
@@ -124,7 +124,7 @@ class EditCategoryGamesDialog(SavableModelessDialog):
             for game_checkbox in self.grid.get_children():
                 if game_checkbox.get_active():
                     label = game_checkbox.get_label()
-                    game_id = games_db.get_game_by_field(label, 'name')['id']
+                    game_id = games_db.get_game_by_field(label, "name")["id"]
                     added_games.append(game_id)
 
             for game_id in added_games:
@@ -132,6 +132,3 @@ class EditCategoryGamesDialog(SavableModelessDialog):
                 game.add_category(new_name)
 
         self.destroy()
-
-    def on_watched_error(self, error):
-        ErrorDialog(error, parent=self)

@@ -8,12 +8,12 @@
   background-color: rgb(255, 199, 116);
 }
 
-.sidebar button {
+.lutrissidebar button {
   padding: 0;
   border: 0;
 }
 
-.sidebar button > image {
+.lutrissidebar button > image {
   padding: 0;
   border: 0;
 }
@@ -24,21 +24,34 @@
   padding: 3px 6px;
 }
 
-.section-frame:not(.frame-hidden) {
+.section-frame {
 	margin-top: 12px;
 	margin-bottom: 12px;
 	margin-left: 12px;
 	margin-right: 12px;
 }
 
-.section-frame:not(.frame-hidden) > box {
+.section-frame > box {
 	margin-bottom: 6px;
 }
 
-.section-frame.frame-hidden > border {
-	border: 0px;
+.info-frame {
+  color: @theme_text_color;
+  background-color: @theme_base_color;
 }
 
-.section-frame.frame-hidden > label {
-	font-size: 0px;
+.in-app-notification {
+    padding: 5px;
+    border-radius: 0
+}
+
+.in-app-notification label link {
+    color: unset;
+}
+
+.in-app-notification button {
+	padding: 0px;
+	min-height: 0px;
+	min-width: 0px;
+	border-radius: 0px;
 }

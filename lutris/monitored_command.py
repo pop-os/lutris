@@ -1,4 +1,5 @@
 """Threading module, used to launch games while monitoring them."""
+
 import contextlib
 import fcntl
 import io
@@ -7,6 +8,7 @@ import shlex
 import subprocess
 import sys
 import uuid
+from copy import copy
 
 from gi.repository import GLib
 
@@ -36,7 +38,6 @@ WRAPPER_SCRIPT = get_wrapper_script_location()
 
 
 class MonitoredCommand:
-
     """Exexcutes a commmand while keeping track of its state"""
 
     fallback_cwd = "/tmp"
@@ -88,18 +89,20 @@ class MonitoredCommand:
 
     def get_wrapper_command(self):
         """Return launch arguments for the wrapper script"""
-        wrapper_command = [
-            WRAPPER_SCRIPT,
-            self._title,
-            str(len(self.include_processes)),
-            str(len(self.exclude_processes)),
-        ] + self.include_processes + self.exclude_processes
+        wrapper_command = (
+            [
+                WRAPPER_SCRIPT,
+                self._title,
+                str(len(self.include_processes)),
+                str(len(self.exclude_processes)),
+            ]
+            + self.include_processes
+            + self.exclude_processes
+        )
         if not self.terminal:
             return wrapper_command + self.command
 
-        terminal_path = system.find_executable(self.terminal)
-        if not terminal_path:
-            raise RuntimeError("Couldn't find terminal %s" % self.terminal)
+        terminal_path = system.find_required_executable(self.terminal)
         script_path = get_terminal_script(self.command, self.cwd, self.env)
         return wrapper_command + [terminal_path, "-e", script_path]
 
@@ -120,25 +123,39 @@ class MonitoredCommand:
     @staticmethod
     def get_environment(user_env):
         """Process the user provided environment variables for use as self.env"""
-        env = user_env or {}
+        env = copy(user_env) if user_env else {}
+
         # not clear why this needs to be added, the path is already added in
         # the wrappper script.
-        env['PYTHONPATH'] = ':'.join(sys.path)
+        env["PYTHONPATH"] = ":".join(sys.path)
         # Drop bad values of environment keys, those will confuse the Python
         # interpreter.
         env["LUTRIS_GAME_UUID"] = str(uuid.uuid4())
-        return {key: value for key, value in env.items() if "=" not in key}
+
+        cleaned = {}
+        for key, value in env.items():
+            if "=" in key:
+                logger.warning("Environment variable name '%s' contains '=' so it can't be used; skipping.", key)
+            elif value is None:
+                logger.warning("Environment variable '%s' has None for its value; skipping.", key)
+            elif not isinstance(value, str):
+                logger.warning("Environment variable '%s' value '%s' is not a string; converting.", key, value)
+                cleaned[key] = str(value)
+            else:
+                cleaned[key] = value
+        return cleaned
 
     def get_child_environment(self):
         """Returns the calculated environment for the child process."""
-        env = os.environ.copy()
+        env = system.get_environment()
         env.update(self.env)
         return env
 
     def start(self):
         """Run the thread."""
-        # for key, value in self.env.items():
-        #     logger.debug("%s=\"%s\"", key, value)
+        if os.environ.get("LUTRIS_DEBUG_ENV") == "1":
+            for key, value in self.env.items():
+                logger.debug('%s="%s"', key, value)
         wrapper_command = self.get_wrapper_command()
         env = self.get_child_environment()
         self.game_process = self.execute_process(wrapper_command, env)
@@ -159,8 +176,22 @@ class MonitoredCommand:
             self.on_stdout_output,
         )
 
+    def log_filter(self, line: str) -> bool:
+        """Filter out some message we don't want to show to the user."""
+        if "GStreamer-WARNING **" in line:
+            return False
+        if "Bad file descriptor" in line:
+            return False
+        if "'libgamemodeauto.so.0' from LD_PRELOAD" in line:
+            return False
+        if "Unable to read VR Path Registry" in line:
+            return False
+        return True
+
     def log_handler_stdout(self, line):
         """Add the line to this command's stdout attribute"""
+        if not self.log_filter(line):
+            return
         self._stdout.write(line)
 
     def log_handler_buffer(self, line):
@@ -169,6 +200,8 @@ class MonitoredCommand:
 
     def log_handler_console_output(self, line):
         """Print the line to stdout"""
+        if not self.log_filter(line):
+            return
         with contextlib.suppress(BlockingIOError):
             sys.stdout.write(line)
             sys.stdout.flush()
@@ -177,11 +210,11 @@ class MonitoredCommand:
         """Get the return code from the file written by the wrapper"""
         return_code_path = "/tmp/lutris-%s" % self.env["LUTRIS_GAME_UUID"]
         if os.path.exists(return_code_path):
-            with open(return_code_path, encoding='utf-8') as return_code_file:
+            with open(return_code_path, encoding="utf-8") as return_code_file:
                 return_code = return_code_file.read()
             os.unlink(return_code_path)
         else:
-            return_code = ''
+            return_code = ""
             logger.warning("No file %s", return_code_path)
         return return_code
 

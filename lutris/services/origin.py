@@ -1,4 +1,5 @@
 """EA Origin service."""
+
 import json
 import os
 import random
@@ -16,8 +17,8 @@ from lutris.config import LutrisConfig, write_game_config
 from lutris.database.games import add_game, get_game_by_field
 from lutris.database.services import ServiceGameCollection
 from lutris.game import Game
-from lutris.installer import get_installers
 from lutris.services.base import OnlineService
+from lutris.services.lutris import sync_media
 from lutris.services.service_game import ServiceGame
 from lutris.services.service_media import ServiceMedia
 from lutris.util.log import logger
@@ -33,7 +34,7 @@ class OriginLauncher:
         self.prefix_path = prefix_path
 
     def iter_manifests(self):
-        manifests_path = os.path.join(self.prefix_path, 'drive_c', self.manifests_paths)
+        manifests_path = os.path.join(self.prefix_path, "drive_c", self.manifests_paths)
         if not os.path.exists(manifests_path):
             logger.warning("No directory in %s", manifests_path)
             return
@@ -50,8 +51,7 @@ class OriginLauncher:
 
 class OriginPackArtSmall(ServiceMedia):
     service = "origin"
-    file_pattern = "%s.jpg"
-    file_format = "jpeg"
+    file_patterns = ["%s.jpg"]
     size = (63, 89)
     dest_path = os.path.join(settings.CACHE_DIR, "origin/pack-art-small")
     api_field = "packArtSmall"
@@ -161,14 +161,6 @@ class OriginService(OnlineService):
     def api_url(self):
         return "https://api%s.origin.com" % random.randint(1, 4)
 
-    def run(self):
-        db_game = get_game_by_field(self.client_installer, "slug")
-        game = Game(db_game["id"])
-        game.emit("game-launch")
-
-    def is_launchable(self):
-        return get_game_by_field(self.client_installer, "slug")
-
     def is_connected(self):
         return bool(self.access_token)
 
@@ -180,7 +172,7 @@ class OriginService(OnlineService):
         token_data = self.get_access_token()
         if not token_data:
             raise RuntimeError("Failed to get access token")
-        with open(self.token_path, "w", encoding='utf-8') as token_file:
+        with open(self.token_path, "w", encoding="utf-8") as token_file:
             token_file.write(json.dumps(token_data, indent=2))
         self.access_token = self.load_access_token()
 
@@ -199,9 +191,9 @@ class OriginService(OnlineService):
                 "client_id": "ORIGIN_JS_SDK",
                 "response_type": "token",
                 "redirect_uri": "nucleus:rest",
-                "prompt": "none"
+                "prompt": "none",
             },
-            cookies=self.load_cookies()
+            cookies=self.load_cookies(),
         )
         response.raise_for_status()
         token_data = response.json()
@@ -211,23 +203,21 @@ class OriginService(OnlineService):
         response = self.session.get(
             "https://gateway.ea.com/proxy/identity/pids/me",
             cookies=self.load_cookies(),
-            headers=self.get_auth_headers()
+            headers=self.get_auth_headers(),
         )
         return response.json()
 
     def get_identity(self):
         """Request the user info"""
         identity_data = self._request_identity()
-        if identity_data.get('error') == "invalid_access_token":
+        if identity_data.get("error") == "invalid_access_token":
             logger.warning("Refreshing Origin access token")
             self.fetch_access_token()
             identity_data = self._request_identity()
         elif identity_data.get("error"):
-            raise RuntimeError(
-                "%s (Error code: %s)" % (identity_data["error"], identity_data["error_number"])
-            )
+            raise RuntimeError("%s (Error code: %s)" % (identity_data["error"], identity_data["error_number"]))
 
-        if 'error' in identity_data:
+        if "error" in identity_data:
             raise RuntimeError(identity_data["error"])
         try:
             user_id = identity_data["pid"]["pidId"]
@@ -236,8 +226,7 @@ class OriginService(OnlineService):
             raise
 
         persona_id_response = self.session.get(
-            "{}/atom/users?userIds={}".format(self.api_url, user_id),
-            headers=self.get_auth_headers()
+            "{}/atom/users?userIds={}".format(self.api_url, user_id), headers=self.get_auth_headers()
         )
         content = persona_id_response.text
         origin_account_info = ElementTree.fromstring(content)
@@ -275,10 +264,7 @@ class OriginService(OnlineService):
 
     def get_entitlements(self, user_id):
         """Request the user's entitlements"""
-        url = "%s/ecommerce2/consolidatedentitlements/%s?machine_hash=1" % (
-            self.api_url,
-            user_id
-        )
+        url = "%s/ecommerce2/consolidatedentitlements/%s?machine_hash=1" % (self.api_url, user_id)
         headers = self.get_auth_headers()
         headers["Accept"] = "application/vnd.origin.v3+json; x-cache/force-write"
         response = self.session.get(url, headers=headers)
@@ -292,7 +278,7 @@ class OriginService(OnlineService):
         return {
             "Authorization": "Bearer %s" % self.access_token,
             "AuthToken": self.access_token,
-            "X-AuthToken": self.access_token
+            "X-AuthToken": self.access_token,
         }
 
     def add_installed_games(self):
@@ -304,11 +290,13 @@ class OriginService(OnlineService):
             logger.error("Invalid install of Origin at %s", origin_prefix)
             return
         origin_launcher = OriginLauncher(origin_prefix)
-        installed_games = 0
+        installed_slugs = []
         for manifest in origin_launcher.iter_manifests():
-            self.install_from_origin(origin_game, manifest)
-            installed_games += 1
-        logger.debug("Installed %s Origin games", installed_games)
+            slug = self.install_from_origin(origin_game, manifest)
+            if slug:
+                installed_slugs.append(slug)
+        sync_media(installed_slugs)
+        logger.debug("Installed %s Origin games", len(installed_slugs))
 
     def install_from_origin(self, origin_game, manifest):
         if "id" not in manifest:
@@ -326,10 +314,11 @@ class OriginService(OnlineService):
         game_config = LutrisConfig(game_config_id=origin_game["configpath"]).game_level
         game_config["game"]["args"] = get_launch_arguments(manifest["id"])
         configpath = write_game_config(lutris_game_id, game_config)
-        game_id = add_game(
+        slug = self.get_installed_slug(service_game)
+        add_game(
             name=service_game["name"],
             runner=origin_game["runner"],
-            slug=slugify(service_game["name"]),
+            slug=slug,
             directory=origin_game["directory"],
             installed=1,
             installer_slug=lutris_game_id,
@@ -337,7 +326,7 @@ class OriginService(OnlineService):
             service=self.id,
             service_id=offer_id,
         )
-        return game_id
+        return slug
 
     def generate_installer(self, db_game, origin_db_game):
         origin_game = Game(origin_db_game["id"])
@@ -348,8 +337,8 @@ class OriginService(OnlineService):
             "name": db_game["name"],
             "version": self.name,
             "slug": slugify(db_game["name"]) + "-" + self.id,
-            "game_slug": slugify(db_game["name"]),
-            "runner": self.runner,
+            "game_slug": self.get_installed_slug(db_game),
+            "runner": self.get_installed_runner_name(db_game),
             "appid": db_game["appid"],
             "script": {
                 "requires": self.client_installer,
@@ -357,31 +346,31 @@ class OriginService(OnlineService):
                     "args": get_launch_arguments(db_game["appid"]),
                 },
                 "installer": [
-                    {"task": {
-                        "name": "wineexec",
-                        "executable": origin_exe,
-                        "args": get_launch_arguments(db_game["appid"], "download"),
-                        "prefix": origin_game.config.game_config["prefix"],
-                        "description": (
-                            "Origin will now open and install %s." % db_game["name"]
-                        )
-                    }}
-                ]
-            }
+                    {
+                        "task": {
+                            "name": "wineexec",
+                            "executable": origin_exe,
+                            "args": get_launch_arguments(db_game["appid"], "download"),
+                            "prefix": origin_game.config.game_config["prefix"],
+                            "description": ("Origin will now open and install %s." % db_game["name"]),
+                        }
+                    }
+                ],
+            },
         }
+
+    def get_installed_runner_name(self, db_game):
+        return self.runner
 
     def install(self, db_game):
         origin_game = get_game_by_field(self.client_installer, "slug")
         application = Gio.Application.get_default()
         if not origin_game or not origin_game["installed"]:
             logger.warning("Installing the Origin client")
-            installers = get_installers(game_slug=self.client_installer)
-            application.show_installer_window(installers)
+            application.show_lutris_installer_window(game_slug=self.client_installer)
         else:
             application.show_installer_window(
-                [self.generate_installer(db_game, origin_game)],
-                service=self,
-                appid=db_game["appid"]
+                [self.generate_installer(db_game, origin_game)], service=self, appid=db_game["appid"]
             )
 
 

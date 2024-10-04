@@ -1,9 +1,10 @@
 """Grid view for the main window"""
+
 # pylint: disable=no-member
 from gi.repository import Gtk
 
 from lutris import settings
-from lutris.gui.views import COL_ID, COL_INSTALLED, COL_MEDIA_PATH, COL_NAME, COL_PLATFORM
+from lutris.gui.views import COL_ID, COL_INSTALLED, COL_MEDIA_PATHS, COL_NAME, COL_PLATFORM
 from lutris.gui.views.base import GameView
 from lutris.gui.widgets.cellrenderers import GridViewCellRendererImage, GridViewCellRendererText
 from lutris.util.log import logger
@@ -16,7 +17,9 @@ class GameGridView(Gtk.IconView, GameView):
 
     def __init__(self, store, hide_text=False):
         Gtk.IconView.__init__(self)
-        GameView.__init__(self, store.service)
+        GameView.__init__(self)
+
+        Gtk.IconView.set_selection_mode(self, Gtk.SelectionMode.MULTIPLE)
 
         self.set_column_spacing(6)
         self._show_badges = True
@@ -43,18 +46,12 @@ class GameGridView(Gtk.IconView, GameView):
         self.connect("style-updated", self.on_style_updated)
 
     def set_game_store(self, game_store):
-        self.game_store = game_store
-        self.service_media = game_store.service_media
+        super().set_game_store(game_store)
         self.model = game_store.store
         self.set_model(self.model)
 
-        size = game_store.service_media.size
-
-        if self.image_renderer:
-            self.image_renderer.media_width = size[0]
-            self.image_renderer.media_height = size[1]
-
         if self.text_renderer:
+            size = game_store.service_media.size
             cell_width = max(size[0], self.min_width)
             self.text_renderer.set_width(cell_width)
 
@@ -74,30 +71,35 @@ class GameGridView(Gtk.IconView, GameView):
             self.image_renderer.show_badges = self.show_badges
             self.clear_attributes(self.image_renderer)
             self.add_attribute(self.image_renderer, "game_id", COL_ID)
-            self.add_attribute(self.image_renderer, "media_path", COL_MEDIA_PATH)
+            self.add_attribute(self.image_renderer, "media_paths", COL_MEDIA_PATHS)
             self.add_attribute(self.image_renderer, "platform", COL_PLATFORM)
             self.add_attribute(self.image_renderer, "is_installed", COL_INSTALLED)
 
-    def select(self):
-        self.select_path(self.current_path)
+    def get_path_at(self, x, y):
+        return self.get_path_at_pos(x, y)
 
-    def get_selected_item(self):
-        """Return the currently selected game's id."""
-        selection = self.get_selected_items()
-        if not selection:
-            return
-        self.current_path = selection[0]
-        return self.get_model().get_iter(self.current_path)
+    def set_selected(self, path):
+        self.unselect_all()
+        self.select_path(path)
+
+    def get_selected(self):
+        """Return list of all selected items"""
+        return self.get_selected_items()
+
+    def get_game_id_for_path(self, path):
+        iterator = self.get_model().get_iter(path)
+        return self.get_model().get_value(iterator, COL_ID)
 
     def on_item_activated(self, _view, _path):
         """Handles double clicks"""
         selected_id = self.get_selected_game_id()
-        logger.debug("Item activated: %s", selected_id)
-        self.emit("game-activated", selected_id)
+        if selected_id:
+            logger.debug("Item activated: %s", selected_id)
+            self.emit("game-activated", selected_id)
 
     def on_selection_changed(self, _view):
         """Handles selection changes"""
-        selected_items = self.get_selected_item()
+        selected_items = self.get_selected()
         if selected_items:
             self.emit("game-selected", selected_items)
 

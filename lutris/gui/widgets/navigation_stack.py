@@ -1,4 +1,5 @@
 """Window used for game installers"""
+
 # pylint: disable=too-many-lines
 from gi.repository import Gtk
 
@@ -64,7 +65,7 @@ class NavigationStack(Gtk.Stack):
         In addition, this updates the navigation state so navigate_back()
         and such work, they may call the presenter again.
         """
-        if self.current_navigated_page_presenter:
+        if self.current_navigated_page_presenter and self.current_navigated_page_presenter != page_presenter:
             self.navigation_stack.append(self.current_navigated_page_presenter)
             self._update_back_button()
 

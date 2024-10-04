@@ -4,39 +4,26 @@ from lutris.util.log import logger
 
 
 class ServiceGameCollection:
-
     @classmethod
-    def get_service_games(
-        cls,
-        searches=None,
-        filters=None,
-        excludes=None,
-        sorts=None
-    ):
+    def get_service_games(cls, searches=None, filters=None, excludes=None, sorts=None):
         return sql.filtered_query(
-            settings.PGA_DB,
-            "service_games",
-            searches=searches,
-            filters=filters,
-            excludes=excludes,
-            sorts=sorts
+            settings.DB_PATH, "service_games", searches=searches, filters=filters, excludes=excludes, sorts=sorts
         )
 
     @classmethod
     def get_for_service(cls, service):
         if not service:
             raise ValueError("No service provided")
-        return sql.filtered_query(settings.PGA_DB, "service_games", filters={"service": service})
+        return sql.filtered_query(settings.DB_PATH, "service_games", filters={"service": service})
 
     @classmethod
     def get_game(cls, service, appid):
         """Return a single game referred by its appid"""
-        logger.debug("Getting service game %s for %s", appid, service)
         if not service:
             raise ValueError("No service provided")
         if not appid:
             raise ValueError("No appid provided")
-        results = sql.filtered_query(settings.PGA_DB, "service_games", filters={"service": service, "appid": appid})
+        results = sql.filtered_query(settings.DB_PATH, "service_games", filters={"service": service, "appid": appid})
         if not results:
             return
         if len(results) > 1:

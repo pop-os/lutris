@@ -6,11 +6,18 @@ from lutris.exceptions import UnavailableRunnerError
 from lutris.game import Game
 from lutris.gui import dialogs
 from lutris.gui.dialogs.download import DownloadDialog
-from lutris.runners import wine
+from lutris.services import get_enabled_services
 from lutris.util.downloader import Downloader
 
 
-class LaunchUIDelegate:
+class Delegate:
+    def get_service(self, service_id):
+        """Returns a new service object by its id. This seems dumb, but it is a work-around
+        for Python's circular import limitations."""
+        return get_enabled_services()[service_id]()
+
+
+class LaunchUIDelegate(Delegate):
     """These objects provide UI for the game while it is being launched;
     one provided to the launch() method.
 
@@ -30,7 +37,7 @@ class LaunchUIDelegate:
         actual checks.
         """
         if not game.runner.is_installed():
-            raise UnavailableRunnerError("The required runner '%s' is not installed." % game.runner.name)
+            raise UnavailableRunnerError(_("The required runner '%s' is not installed.") % game.runner.name)
         return True
 
     def select_game_launch_config(self, game):
@@ -43,7 +50,7 @@ class LaunchUIDelegate:
         return {}  # primary game
 
 
-class InstallUIDelegate:
+class InstallUIDelegate(Delegate):
     """These objects provide UI for a runner as it is installing itself.
     One of these must be provided to the install() method.
 
@@ -108,19 +115,23 @@ class DialogInstallUIDelegate(InstallUIDelegate):
     """This provides UI for runner installation via dialogs."""
 
     def show_install_yesno_inquiry(self, question, title):
-        dialog = dialogs.QuestionDialog({
-            "parent": self,
-            "question": question,
-            "title": title,
-        })
+        dialog = dialogs.QuestionDialog(
+            {
+                "parent": self,
+                "question": question,
+                "title": title,
+            }
+        )
         return Gtk.ResponseType.YES == dialog.result
 
     def show_install_file_inquiry(self, question, title, message):
-        dlg = dialogs.QuestionDialog({
-            "parent": self,
-            "question": question,
-            "title": title,
-        })
+        dlg = dialogs.QuestionDialog(
+            {
+                "parent": self,
+                "question": question,
+                "title": title,
+            }
+        )
         if dlg.result == dlg.YES:
             dlg = dialogs.FileDialog(message)
             return dlg.filename
@@ -139,10 +150,6 @@ class DialogLaunchUIDelegate(LaunchUIDelegate):
             installed = game.runner.install_dialog(self)
             if not installed:
                 return False
-
-        if "wine" in game.runner_name and not wine.get_system_wine_version():
-            dialogs.WineNotInstalledWarning(parent=self)
-            return False
 
         return True
 
@@ -196,12 +203,7 @@ class DialogLaunchUIDelegate(LaunchUIDelegate):
             config_index = get_preferred_config_index()
 
         if config_index is None:
-            dlg = dialogs.LaunchConfigSelectDialog(
-                game,
-                configs,
-                title=_("Select game to launch"),
-                parent=self
-            )
+            dlg = dialogs.LaunchConfigSelectDialog(game, configs, title=_("Select game to launch"), parent=self)
             if not dlg.confirmed:
                 return None  # no error here- the user cancelled out
 

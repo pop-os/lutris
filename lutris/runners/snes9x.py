@@ -6,6 +6,7 @@ from gettext import gettext as _
 
 # Lutris Modules
 from lutris import settings
+from lutris.exceptions import MissingGameExecutableError
 from lutris.runners.runner import Runner
 from lutris.util import system
 from lutris.util.log import logger
@@ -31,13 +32,7 @@ class snes9x(Runner):
     ]
 
     runner_options = [
-        {
-            "option": "fullscreen",
-            "type": "bool",
-            "section": _("Graphics"),
-            "label": _("Fullscreen"),
-            "default": "1"
-        },
+        {"option": "fullscreen", "type": "bool", "section": _("Graphics"), "label": _("Fullscreen"), "default": "1"},
         {
             "option": "maintain_aspect_ratio",
             "type": "bool",
@@ -83,5 +78,5 @@ class snes9x(Runner):
 
         rom = self.game_config.get("main_file") or ""
         if not system.path_exists(rom):
-            return {"error": "FILE_NOT_FOUND", "file": rom}
+            raise MissingGameExecutableError(filename=rom)
         return {"command": self.get_command() + [rom]}

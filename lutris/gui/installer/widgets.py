@@ -1,11 +1,14 @@
 from gi.repository import Gtk, Pango
 
+from lutris.util.strings import is_valid_pango_markup
+
 
 class InstallerLabel(Gtk.Label):
     """A label for installers"""
 
     def __init__(self, text, wrap=True, selectable=False):
         super().__init__()
+
         if wrap:
             self.set_line_wrap(True)
             self.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
@@ -13,7 +16,12 @@ class InstallerLabel(Gtk.Label):
             self.set_property("ellipsize", Pango.EllipsizeMode.MIDDLE)
         self.set_alignment(0, 0.5)
         self.set_margin_right(12)
-        self.set_markup(text)
+
+        if is_valid_pango_markup(text):
+            self.set_markup(text)
+        else:
+            self.set_text(text)
+
         self.props.can_focus = False
         self.set_tooltip_text(text)
         self.set_selectable(selectable)

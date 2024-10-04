@@ -1,4 +1,5 @@
 """Set service ID for Steam games"""
+
 from lutris import settings
 from lutris.database.games import get_games, sql
 
@@ -12,8 +13,5 @@ def migrate():
             continue
         print("Migrating Steam game %s" % game["name"])
         sql.db_update(
-            settings.PGA_DB,
-            "games",
-            {"service": "steam", "service_id": game["steamid"]},
-            {"id": game["id"]}
+            settings.DB_PATH, "games", {"service": "steam", "service_id": game["steamid"]}, {"id": game["id"]}
         )

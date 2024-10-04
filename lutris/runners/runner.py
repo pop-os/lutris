@@ -1,23 +1,25 @@
 """Base module for runners"""
+
 import os
 import signal
 from gettext import gettext as _
+from typing import Any, Callable, Dict, Optional
 
 from lutris import runtime, settings
-from lutris.api import get_default_runner_version
-from lutris.command import MonitoredCommand
+from lutris.api import format_runner_version, get_default_runner_version_info
 from lutris.config import LutrisConfig
 from lutris.database.games import get_game_by_field
-from lutris.exceptions import GameConfigError, UnavailableLibrariesError
+from lutris.exceptions import MisconfigurationError, MissingExecutableError, UnavailableLibrariesError
+from lutris.monitored_command import MonitoredCommand
 from lutris.runners import RunnerInstallationError
 from lutris.util import flatpak, strings, system
-from lutris.util.extract import ExtractFailure, extract_archive
+from lutris.util.extract import ExtractError, extract_archive
+from lutris.util.graphics.gpu import GPUS
 from lutris.util.linux import LINUX_SYSTEM
 from lutris.util.log import logger
 
 
 class Runner:  # pylint: disable=too-many-public-methods
-
     """Generic runner (base class for other runners)."""
 
     multiple_versions = False
@@ -57,6 +59,12 @@ class Runner:  # pylint: disable=too-many-public-methods
     def description(self, value):
         """Leave the ability to override the docstring."""
         self.__doc__ = value  # What the shit
+
+    @property
+    def runner_warning(self):
+        """Returns a message (as markup) that is displayed in the configuration dialog as
+        a warning."""
+        return None
 
     @property
     def name(self):
@@ -105,7 +113,7 @@ class Runner:  # pylint: disable=too-many-public-methods
         """Return the directory where the game is installed."""
         game_path = self.game_data.get("directory")
         if game_path:
-            return game_path
+            return os.path.expanduser(game_path)  # expanduser just in case!
 
         if self.has_explicit_config:
             # Default to the directory where the entry point is located.
@@ -159,30 +167,53 @@ class Runner:  # pylint: disable=too-many-public-methods
                     "advanced": True,
                 }
             )
+
+        runner_options.append(
+            {
+                "section": _("Side Panel"),
+                "option": "visible_in_side_panel",
+                "type": "bool",
+                "label": _("Visible in Side Panel"),
+                "default": True,
+                "advanced": True,
+                "scope": ["runner"],
+                "help": _("Show this runner in the side panel if it is installed or available through Flatpak."),
+            }
+        )
         return runner_options
 
-    def get_executable(self):
+    def get_executable(self) -> str:
         if "runner_executable" in self.runner_config:
             runner_executable = self.runner_config["runner_executable"]
             if os.path.isfile(runner_executable):
                 return runner_executable
         if not self.runner_executable:
-            raise ValueError("runner_executable not set for {}".format(self.name))
-        return os.path.join(settings.RUNNER_DIR, self.runner_executable)
+            raise MisconfigurationError("runner_executable not set for {}".format(self.name))
+
+        exe = os.path.join(settings.RUNNER_DIR, self.runner_executable)
+        if not os.path.isfile(exe):
+            raise MissingExecutableError(_("The executable '%s' could not be found.") % self.runner_executable)
+        return exe
 
     def get_command(self):
-        exe = self.get_executable()
-        if system.path_exists(exe):
+        """Returns the command line to run the runner itself; generally a game
+        will be appended to this by play()."""
+        try:
+            exe = self.get_executable()
+            if not system.path_exists(exe):
+                raise MissingExecutableError(_("The executable '%s' could not be found.") % exe)
             return [exe]
-        if flatpak.is_app_installed(self.flatpak_id):
-            return flatpak.get_run_command(self.flatpak_id)
-        return []
+        except MisconfigurationError:
+            if flatpak.is_app_installed(self.flatpak_id):
+                return flatpak.get_run_command(self.flatpak_id)
+
+            raise
 
     def get_env(self, os_env=False, disable_runtime=False):
         """Return environment variables used for a game."""
         env = {}
         if os_env:
-            env.update(os.environ.copy())
+            env = system.get_environment()
 
         # By default we'll set NVidia's shader disk cache to be
         # per-game, so it overflows less readily.
@@ -194,7 +225,7 @@ class Runner:  # pylint: disable=too-many-public-methods
         if sdl_gamecontrollerconfig:
             path = os.path.expanduser(sdl_gamecontrollerconfig)
             if system.path_exists(path):
-                with open(path, "r", encoding='utf-8') as controllerdb_file:
+                with open(path, "r", encoding="utf-8") as controllerdb_file:
                     sdl_gamecontrollerconfig = controllerdb_file.read()
             env["SDL_GAMECONTROLLERCONFIG"] = sdl_gamecontrollerconfig
 
@@ -203,25 +234,21 @@ class Runner:  # pylint: disable=too-many-public-methods
         if sdl_video_fullscreen and sdl_video_fullscreen != "off":
             env["SDL_VIDEO_FULLSCREEN_DISPLAY"] = sdl_video_fullscreen
 
-        # DRI Prime
-        if self.system_config.get("dri_prime"):
-            env["DRI_PRIME"] = "1"
-
-        # Prime vars
-        prime = self.system_config.get("prime")
-        if prime:
-            env["__NV_PRIME_RENDER_OFFLOAD"] = "1"
-            env["__GLX_VENDOR_LIBRARY_NAME"] = "nvidia"
-            env["__VK_LAYER_NV_optimus"] = "NVIDIA_only"
+        if self.system_config.get("gpu") and len(GPUS) > 1:
+            gpu = GPUS[self.system_config["gpu"]]
+            if gpu.driver == "nvidia":
+                env["DRI_PRIME"] = "1"
+                env["__NV_PRIME_RENDER_OFFLOAD"] = "1"
+                env["__GLX_VENDOR_LIBRARY_NAME"] = "nvidia"
+                env["__VK_LAYER_NV_optimus"] = "NVIDIA_only"
+            else:
+                env["DRI_PRIME"] = gpu.pci_id
+            env["VK_ICD_FILENAMES"] = gpu.icd_files  # Deprecated
+            env["VK_DRIVER_FILES"] = gpu.icd_files  # Current form
 
         # Set PulseAudio latency to 60ms
         if self.system_config.get("pulse_latency"):
             env["PULSE_LATENCY_MSEC"] = "60"
-
-        # Vulkan ICD files
-        vk_icd = self.system_config.get("vk_icd")
-        if vk_icd:
-            env["VK_ICD_FILENAMES"] = vk_icd
 
         runtime_ld_library_path = None
 
@@ -231,8 +258,7 @@ class Runner:  # pylint: disable=too-many-public-methods
 
         if runtime_ld_library_path:
             ld_library_path = env.get("LD_LIBRARY_PATH")
-            env["LD_LIBRARY_PATH"] = os.pathsep.join(filter(None, [
-                runtime_ld_library_path, ld_library_path]))
+            env["LD_LIBRARY_PATH"] = os.pathsep.join(filter(None, [runtime_ld_library_path, ld_library_path]))
 
         # Apply user overrides at the end
         env.update(self.system_config.get("env") or {})
@@ -272,13 +298,8 @@ class Runner:  # pylint: disable=too-many-public-methods
 
         if "command" in launch_config:
             command = strings.split_arguments(launch_config["command"])
-        elif "command" in gameplay_info:
-            command = [gameplay_info["command"][0]]
         else:
-            logger.debug("No command in %s", gameplay_info)
-            logger.debug(launch_config)
-            # The 'file' sort of gameplay_info cannot be made to use a configuration
-            raise GameConfigError(_("The runner could not find a command to apply the configuration to."))
+            command = self.get_command()
 
         exe = self.get_launch_config_exe(launch_config)
         if exe:
@@ -297,14 +318,17 @@ class Runner:  # pylint: disable=too-many-public-methods
         exe = launch_config.get("exe")
         config_working_dir = self.get_launch_config_working_dir(launch_config)
 
-        if exe and config_working_dir and not os.path.isabs(exe):
-            exe_from_config = self.resolve_config_path(exe, config_working_dir)
-            exe_from_game = self.resolve_config_path(exe)
+        if exe:
+            exe = os.path.expanduser(exe)  # just in case!
 
-            if os.path.exists(exe_from_game) and not os.path.exists(exe_from_config):
-                relative = os.path.relpath(exe_from_game, start=config_working_dir)
-                if not relative.startswith("../"):
-                    return relative
+            if config_working_dir and not os.path.isabs(exe):
+                exe_from_config = self.resolve_config_path(exe, config_working_dir)
+                exe_from_game = self.resolve_config_path(exe)
+
+                if os.path.exists(exe_from_game) and not os.path.exists(exe_from_config):
+                    relative = os.path.relpath(exe_from_game, start=config_working_dir)
+                    if not relative.startswith("../"):
+                        return relative
 
         return exe
 
@@ -324,11 +348,14 @@ class Runner:  # pylint: disable=too-many-public-methods
 
     def resolve_config_path(self, path, relative_to=None):
         """Interpret a path taken from the launch_config relative to
-        a working directory, using the game's working_dir if that is omitted.
+        a working directory, using the game's working_dir if that is omitted,
+        and expanding the '~' if we get one.
 
         This is provided as a method so the WINE runner can try to convert
         Windows-style paths to usable paths.
         """
+        path = os.path.expanduser(path)
+
         if not os.path.isabs(path):
             if not relative_to:
                 relative_to = self.working_dir
@@ -394,8 +421,7 @@ class Runner:  # pylint: disable=too-many-public-methods
         """
 
         if ui_delegate.show_install_yesno_inquiry(
-            question=_("The required runner is not installed.\n"
-                       "Do you wish to install it now?"),
+            question=_("The required runner is not installed.\n" "Do you wish to install it now?"),
             title=_("Required runner unavailable"),
         ):
             if hasattr(self, "get_version"):
@@ -407,16 +433,35 @@ class Runner:  # pylint: disable=too-many-public-methods
             return self.is_installed()
         return False
 
-    def is_installed(self):
+    def is_installed(self, flatpak_allowed: bool = True) -> bool:
         """Return whether the runner is installed"""
-        if system.path_exists(self.get_executable()):
-            return True
-        return self.flatpak_id and flatpak.is_app_installed(self.flatpak_id)
+        try:
+            # Don't care where the exe is, only if we can find it.
+            exe = self.get_executable()
+            if system.path_exists(exe):
+                return True
+        except MisconfigurationError:
+            pass  # We can still try flatpak even if 'which' fails us!
 
-    def get_runner_version(self, version=None) -> dict:
+        return bool(flatpak_allowed and self.flatpak_id and flatpak.is_app_installed(self.flatpak_id))
+
+    def is_installed_for(self, interpreter):
+        """Returns whether the runner is installed. Specific runners can extract additional
+        script settings, to determine more precisely what must be installed."""
+        return self.is_installed()
+
+    def get_installer_runner_version(self, installer, use_runner_config: bool = True) -> Optional[str]:
+        return None
+
+    def adjust_installer_runner_config(self, installer_runner_config: Dict[str, Any]) -> None:
+        """This is called during installation to let to run fix up in the runner's section of
+        the configuration before it is saved. This method should modify the dict given."""
+        pass
+
+    def get_runner_version(self, version: str = None) -> Dict[str, str]:
         """Get the appropriate version for a runner, as with get_default_runner_version(),
         but this method allows the runner to apply its configuration."""
-        return get_default_runner_version(self.name, version)
+        return get_default_runner_version_info(self.name, version)
 
     def install(self, install_ui_delegate, version=None, callback=None):
         """Install runner using package management systems."""
@@ -430,20 +475,18 @@ class Runner:  # pylint: disable=too-many-public-methods
         if self.download_url:
             opts["dest"] = self.directory
             return self.download_and_extract(self.download_url, **opts)
-        runner_version = self.get_runner_version(version)
-        if not runner_version:
+        runner_version_info = self.get_runner_version(version)
+        if not runner_version_info:
             raise RunnerInstallationError(_("Failed to retrieve {} ({}) information").format(self.name, version))
 
         if "wine" in self.name:
             opts["merge_single"] = True
-            opts["dest"] = os.path.join(
-                self.directory, "{}-{}".format(runner_version["version"], runner_version["architecture"])
-            )
+            opts["dest"] = os.path.join(self.directory, format_runner_version(runner_version_info))
 
         if self.name == "libretro" and version:
             opts["merge_single"] = False
             opts["dest"] = os.path.join(settings.RUNNER_DIR, "retroarch/cores")
-        self.download_and_extract(runner_version["url"], **opts)
+        self.download_and_extract(runner_version_info["url"], **opts)
 
     def download_and_extract(self, url, dest=None, **opts):
         install_ui_delegate = opts["install_ui_delegate"]
@@ -462,7 +505,7 @@ class Runner:  # pylint: disable=too-many-public-methods
             raise RunnerInstallationError(_("Failed to extract {}").format(archive))
         try:
             extract_archive(archive, dest, merge_single=merge_single)
-        except ExtractFailure as ex:
+        except ExtractError as ex:
             logger.error("Failed to extract the archive %s file may be corrupt", archive)
             raise RunnerInstallationError(_("Failed to extract {}: {}").format(archive, ex)) from ex
         os.remove(archive)
@@ -470,6 +513,7 @@ class Runner:  # pylint: disable=too-many-public-methods
         if self.name == "wine":
             logger.debug("Clearing wine version cache")
             from lutris.util.wine.wine import get_installed_wine_versions
+
             get_installed_wine_versions.cache_clear()
 
         if self.runner_executable:
@@ -486,14 +530,16 @@ class Runner:  # pylint: disable=too-many-public-methods
     def can_uninstall(self):
         return os.path.isdir(self.directory)
 
-    def uninstall(self):
+    def uninstall(self, uninstall_callback: Callable[[], None]) -> None:
         runner_path = self.directory
         if os.path.isdir(runner_path):
-            system.remove_folder(runner_path)
+            system.remove_folder(runner_path, completion_function=uninstall_callback)
+        else:
+            uninstall_callback()
 
     def find_option(self, options_group, option_name):
         """Retrieve an option dict if it exists in the group"""
-        if options_group not in ['game_options', 'runner_options']:
+        if options_group not in ["game_options", "runner_options"]:
             return None
         output = None
         for item in getattr(self, options_group):

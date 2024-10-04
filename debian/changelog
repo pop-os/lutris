@@ -1,3 +1,68 @@
+lutris (0.5.17) jammy; urgency=medium
+
+  * Fix critical bug preventing completion of installs if the script specifies a wine version
+  * Fix critical bug preventing Steam library sync
+  * Fix critical bug preventing game or runner uninstall in Flatpak
+  * Support for library sync to lutris.net, this allows to sync games, play
+    time and categories to multiple devices.
+  * Remove "Lutris" service view; with library sync the "Games" view replaces it.
+  * Torturous and sadistic options for multi-GPUs that were half broken and understood by no one have been replaced by a simple GPU selector.
+  * EXPERIMENTAL support for umu, which allows running games with Proton and
+    Pressure Vessel. Using Proton in Lutris without umu is no longer possible.
+  * Better and sensible sorting for games (sorting by playtime or last played no longer needs to be reversed)
+  * Support the "Categories" command when you select multiple games
+  * Notification bar when your Lutris is no longer supported
+  * Improved error dialog.
+  * Add Vita3k runner (thanks @ItsAllAboutTheCode)
+  * Add Supermodel runner
+  * WUA files are now supported in Cemu
+  * "Show Hidden Games" now displays the hidden games in a separate view, and re-hides them as soon as you leave it.
+  * Support transparent PNG files for custom banner and cover-art
+  * Images are now downloaded for manually added games.
+  * Deprecate 'exe', 'main_file' or 'iso' placed at the root of the script,
+    all lutris.net installers have been updated accordingly.
+  * Deprecate libstrangle and xgamma support.
+  * Deprecate DXVK state cache feature (it was never used and is no longer relevant to DXVK 2)
+
+ -- Mathieu Comandon <mathieucomandon@gmail.com>  Wed, 03 Apr 2024 13:49:49 -0700
+
+lutris (0.5.16) jammy; urgency=medium
+
+  * Fix bug that prevented installers to complete
+  * Better handling of Steam configurations for the Steam account picker
+  * Load game library in a background thread
+
+ -- Mathieu Comandon <mathieucomandon@gmail.com>  Mon, 15 Jan 2024 16:10:35 -0800
+
+lutris (0.5.15) jammy; urgency=medium
+
+  * Fix some crashes happening when using Wayland and a high DPI gaming mouse
+  * Fix crash when opening the system preferences tab for a game
+  * Reduced the locales list to a predefined one (let us know if you need yours added)
+  * Fix Lutris not expanding "~" in paths
+  * Download runtime components from the main window,
+    the "updating runtime" dialog appearing before Lutris opens has been removed
+  * Add the ability to open a location in your file browser from file picker widgets
+  * Add the ability to select, remove, or stop multiple games in the Lutris window
+  * Redesigned 'Uninstall Game' dialog now completely removes games by default
+  * Fix the export / import feature
+  * Show an animation when a game is launched
+  * Add the ability to disable Wine auto-updates at the expense of losing support
+  * Add playtime editing in the game preferences
+  * Move game files, runners to the trash instead of deleting them they are uninstalled
+  * Add "Updates" tab in Preferences control and check for updates and correct missing media
+    in the 'Games' view.
+  * Add "Storage" tab in Preferences to control game and installer cache location
+  * Expand "System" tab in Preferences with more system information but less brown.
+  * Add "Run Task Manager" command for Wine games
+  * Add two new, smaller banner sizes for itch.io games.
+  * Ignore Wine virtual desktop setting when using Wine-GE/Proton to avoid crash
+  * Ignore MangoHUD setting when launching Steam to avoid crash
+  * Sync Steam playtimes with the Lutris library
+
+
+ -- Mathieu Comandon <mathieucomandon@gmail.com>  Sun, 07 Jan 2024 17:29:46 -0800
+
 lutris (0.5.14) jammy; urgency=medium
 
   * Add Steam account switcher to handle multiple Steam accounts

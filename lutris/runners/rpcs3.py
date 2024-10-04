@@ -1,6 +1,8 @@
 # Standard Library
 from gettext import gettext as _
 
+from lutris.exceptions import MissingGameExecutableError
+
 # Lutris Modules
 from lutris.runners.runner import Runner
 from lutris.util import system
@@ -34,6 +36,6 @@ class rpcs3(Runner):
 
         eboot = self.game_config.get("main_file") or ""
         if not system.path_exists(eboot):
-            return {"error": "FILE_NOT_FOUND", "file": eboot}
+            raise MissingGameExecutableError(filename=eboot)
         arguments.append(eboot)
         return {"command": arguments}

@@ -1,4 +1,5 @@
 """Commands for installer scripts"""
+
 import glob
 import json
 import multiprocessing
@@ -11,49 +12,52 @@ from pathlib import Path
 from gi.repository import GLib
 
 from lutris import runtime
-from lutris.cache import get_cache_path
-from lutris.command import MonitoredCommand
-from lutris.config import LutrisConfig
-from lutris.database.games import get_game_by_field
-from lutris.exceptions import UnavailableRunnerError, watch_errors
-from lutris.game import Game
+from lutris.cache import get_cache_path, has_custom_cache_path
+from lutris.exceptions import MissingExecutableError, UnspecifiedVersionError
 from lutris.installer.errors import ScriptingError
-from lutris.runners import import_task
+from lutris.installer.installer import LutrisInstaller
+from lutris.monitored_command import MonitoredCommand
+from lutris.runners import InvalidRunnerError, import_runner, import_task
+from lutris.runners.wine import wine
 from lutris.util import extract, linux, selective_merge, system
 from lutris.util.fileio import EvilConfigParser, MultiOrderedDict
 from lutris.util.log import logger
-from lutris.util.wine.wine import WINE_DEFAULT_ARCH, get_wine_version_exe
+from lutris.util.wine.wine import WINE_DEFAULT_ARCH, get_default_wine_version, get_wine_path_for_version
 
 
 class CommandsMixin:
     """The directives for the `installer:` part of the install script."""
 
-    def _get_runner_version(self):
-        """Return the version of the runner used for the installer"""
+    # pylint: disable=no-member
+    installer: LutrisInstaller = NotImplemented
+
+    def get_wine_path(self) -> str:
+        """Return absolute path of wine version used during the installation, but
+        None if the wine exe can't be located."""
+        runner = self.get_runner_class(self.installer.runner)()
+        version = runner.get_installer_runner_version(self.installer, use_runner_config=False)
+        if version:
+            return get_wine_path_for_version(version)
+
+        # Special case that lets the Wine configuration explicit specify the path
+        # to the Wine executable, not just a version number.
         if self.installer.runner == "wine":
-            # If a version is specified in the script choose this one
-            if self.installer.script.get(self.installer.runner):
-                return self.installer.script[self.installer.runner].get("version")
-            # If the installer is an extension, use the wine version from the base game
-            if self.installer.requires:
-                db_game = get_game_by_field(self.installer.requires, field="installer_slug")
-                if not db_game:
-                    db_game = get_game_by_field(self.installer.requires, field="slug")
-                if not db_game:
-                    logger.warning("Can't find game %s", self.installer.requires)
-                    return None
-                game = Game(db_game["id"])
-                return game.config.runner_config["version"]
-            # Look up the runner config setting, but only if it is explicitly set;
-            # install scripts do not get the usual default if it is not!
-            runner_config = LutrisConfig(runner_slug="wine")
-            if "wine" in runner_config.runner_level:
-                config_version = runner_config.runner_level["wine"].get("version")
-                if config_version:
-                    return config_version
-        if self.installer.runner == "libretro":
-            return self.installer.script["game"]["core"]
-        return None
+            try:
+                config_version, runner_config = wine.get_runner_version_and_config()
+                return get_wine_path_for_version(config_version, config=runner_config.runner_level["wine"])
+            except UnspecifiedVersionError:
+                pass
+
+        version = get_default_wine_version()
+        return get_wine_path_for_version(version)
+
+    def get_runner_class(self, runner_name):
+        """Runner the runner class from its name"""
+        try:
+            runner = import_runner(runner_name)
+        except InvalidRunnerError as err:
+            raise ScriptingError(_("Invalid runner provided %s") % runner_name) from err
+        return runner
 
     @staticmethod
     def _check_required_params(params, command_data, command_name):
@@ -69,23 +73,25 @@ class CommandsMixin:
                 if not param_present:
                     raise ScriptingError(
                         _("One of {params} parameter is mandatory for the {cmd} command").format(
-                            params=_(" or ").join(param), cmd=command_name),
+                            params=_(" or ").join(param), cmd=command_name
+                        ),
                         command_data,
                     )
             else:
                 if param not in command_data:
                     raise ScriptingError(
                         _("The {param} parameter is mandatory for the {cmd} command").format(
-                            param=param, cmd=command_name),
+                            param=param, cmd=command_name
+                        ),
                         command_data,
                     )
 
     @staticmethod
     def _is_cached_file(file_path):
         """Return whether a file referenced by file_id is stored in the cache"""
-        pga_cache_path = get_cache_path()
-        if not pga_cache_path:
+        if not has_custom_cache_path():
             return False
+        pga_cache_path = get_cache_path()
         return file_path.startswith(pga_cache_path)
 
     def chmodx(self, filename):
@@ -105,8 +111,7 @@ class CommandsMixin:
             self._check_required_params([("file", "command")], data, "execute")
             if "command" in data and "file" in data:
                 raise ScriptingError(
-                    _("Parameters file and command can't be used "
-                      "at the same time for the execute command"),
+                    _("Parameters file and command can't be used " "at the same time for the execute command"),
                     data,
                 )
 
@@ -152,9 +157,11 @@ class CommandsMixin:
         if system.path_exists(exec_path) and not system.is_executable(exec_path):
             logger.warning("Making %s executable", exec_path)
             system.make_executable(exec_path)
-        exec_abs_path = system.find_executable(exec_path)
-        if not exec_abs_path:
-            raise ScriptingError(_("Unable to find executable %s") % exec_path)
+
+        try:
+            exec_abs_path = system.find_required_executable(exec_path)
+        except MissingExecutableError as ex:
+            raise ScriptingError(_("Unable to find executable %s") % exec_path) from ex
 
         if terminal:
             terminal = linux.get_default_terminal()
@@ -227,16 +234,20 @@ class CommandsMixin:
         requires = data.get("requires")
         message = data.get(
             "message",
-            _("Insert or mount game disc and click Autodetect or\n"
-              "use Browse if the disc is mounted on a non standard location."),
+            _(
+                "Insert or mount game disc and click Autodetect or\n"
+                "use Browse if the disc is mounted on a non standard location."
+            ),
         )
         message += (
-            _("\n\nLutris is looking for a mounted disk drive or image \n"
-              "containing the following file or folder:\n"
-              "<i>%s</i>") % requires
+            _(
+                "\n\nLutris is looking for a mounted disk drive or image \n"
+                "containing the following file or folder:\n"
+                "<i>%s</i>"
+            )
+            % requires
         )
-        self.interpreter_ui_delegate.begin_disc_prompt(message, requires, self.installer,
-                                                       self._find_matching_disc)
+        self.interpreter_ui_delegate.begin_disc_prompt(message, requires, self.installer, self._find_matching_disc)
         return "STOP"
 
     def _find_matching_disc(self, _widget, requires, extra_path=None):
@@ -365,8 +376,8 @@ class CommandsMixin:
         filename = self._substitute(data["file"])
         logger.debug("Substituting variables for file %s", filename)
         tmp_filename = filename + ".tmp"
-        with open(filename, "r", encoding='utf-8') as source_file:
-            with open(tmp_filename, "w", encoding='utf-8') as dest_file:
+        with open(filename, "r", encoding="utf-8") as source_file:
+            with open(tmp_filename, "w", encoding="utf-8") as dest_file:
                 line = "."
                 while line:
                     line = source_file.readline()
@@ -382,14 +393,6 @@ class CommandsMixin:
         else:
             runner_name = self.installer.runner
         return runner_name, task_name
-
-    def get_wine_path(self):
-        """Return absolute path of wine version used during the install, but
-        None if the wine exe can't be located."""
-        try:
-            return get_wine_version_exe(self._get_runner_version())
-        except UnavailableRunnerError:
-            return None
 
     def task(self, data):
         """Directive triggering another function specific to a runner.
@@ -407,15 +410,9 @@ class CommandsMixin:
             return_code = "0"
 
         if runner_name.startswith("wine"):
-            wine_path = self.get_wine_path()
-            if wine_path:
-                data["wine_path"] = wine_path
-            data["prefix"] = data.get("prefix") \
-                or self.installer.script.get("game", {}).get("prefix") \
-                or "$GAMEDIR"
-            data["arch"] = data.get("arch") \
-                or self.installer.script.get("game", {}).get("arch") \
-                or WINE_DEFAULT_ARCH
+            data["wine_path"] = self.get_wine_path()
+            data["prefix"] = data.get("prefix") or self.installer.script.get("game", {}).get("prefix") or "$GAMEDIR"
+            data["arch"] = data.get("arch") or self.installer.script.get("game", {}).get("arch") or WINE_DEFAULT_ARCH
             if task_name == "wineexec":
                 data["env"] = self.script_env
 
@@ -442,7 +439,6 @@ class CommandsMixin:
             return "STOP"
         return None
 
-    @watch_errors(error_result=False)
     def _monitor_task(self, command):
         if not command.is_running:
             logger.debug("Return code: %s", command.return_code)
@@ -468,7 +464,7 @@ class CommandsMixin:
         if not mode.startswith(("a", "w")):
             raise ScriptingError(_("Wrong value for write_file mode: '%s'") % mode)
 
-        with open(dest_file_path, mode, encoding='utf-8') as dest_file:
+        with open(dest_file_path, mode, encoding="utf-8") as dest_file:
             dest_file.write(self._substitute(params["content"]))
 
     def write_json(self, params):
@@ -487,7 +483,7 @@ class CommandsMixin:
         # create an empty file if it doesn't exist
         Path(filename).touch(exist_ok=True)
 
-        with open(filename, "r+" if merge else "w", encoding='utf-8') as json_file:
+        with open(filename, "r+" if merge else "w", encoding="utf-8") as json_file:
             json_data = {}
             if merge:
                 try:
@@ -497,6 +493,7 @@ class CommandsMixin:
 
             json_data = selective_merge(json_data, params.get("data", {}))
             json_file.seek(0)
+            json_file.truncate()
             json_file.write(json.dumps(json_data, indent=2))
 
     def write_config(self, params):
@@ -553,11 +550,7 @@ class CommandsMixin:
             return result
 
     def _extract_gog_game(self, file_id):
-        self.extract({
-            "src": file_id,
-            "dst": "$GAMEDIR",
-            "extractor": "innoextract"
-        })
+        self.extract({"src": file_id, "dst": "$GAMEDIR", "extractor": "innoextract"})
         app_path = os.path.join(self.target_path, "app")
         if system.path_exists(app_path):
             for app_content in os.listdir(app_path):
@@ -572,18 +565,14 @@ class CommandsMixin:
 
     def _get_scummvm_arguments(self, gog_config_path):
         """Return a ScummVM configuration from the GOG config files"""
-        with open(gog_config_path, encoding='utf-8') as gog_config_file:
+        with open(gog_config_path, encoding="utf-8") as gog_config_file:
             gog_config = json.loads(gog_config_file.read())
         game_tasks = [task for task in gog_config["playTasks"] if task["category"] == "game"]
         arguments = game_tasks[0]["arguments"]
         game_id = arguments.split()[-1]
         arguments = " ".join(arguments.split()[:-1])
         base_dir = os.path.dirname(gog_config_path)
-        return {
-            "game_id": game_id,
-            "path": base_dir,
-            "arguments": arguments
-        }
+        return {"game_id": game_id, "path": base_dir, "arguments": arguments}
 
     def autosetup_gog_game(self, file_id, silent=False):
         """Automatically guess the best way to install a GOG game by inspecting its contents.
@@ -646,12 +635,7 @@ class CommandsMixin:
             if silent:
                 args += " /SUPPRESSMSGBOXES /VERYSILENT /NOGUI"
             self.installer.is_gog = True
-            return self.task({
-                "name": "wineexec",
-                "prefix": "$GAMEDIR",
-                "executable": file_id,
-                "args": args
-            })
+            return self.task({"name": "wineexec", "prefix": "$GAMEDIR", "executable": file_id, "args": args})
 
     def autosetup_amazon(self, file_and_dir_dict):
         files = file_and_dir_dict["files"]
@@ -663,7 +647,7 @@ class CommandsMixin:
 
         # move installed files from CACHE to game folder
         for file_hash, file in self.game_files.items():
-            file_dir = os.path.dirname(files[file_hash]['path'])
+            file_dir = os.path.dirname(files[file_hash]["path"])
             self.move({"src": file, "dst": f"$GAMEDIR/drive_c/game/{file_dir}"})
 
     def install_or_extract(self, file_id):
@@ -673,15 +657,9 @@ class CommandsMixin:
         if runner != "wine":
             raise ScriptingError(_("install_or_extract only works with wine!"))
         if file_path.endswith(".exe"):
-            params = {
-                "name": "wineexec",
-                "executable": file_id
-            }
+            params = {"name": "wineexec", "executable": file_id}
             return self.task(params)
 
         slug = self.installer.game_slug
-        params = {
-            "file": file_id,
-            "dst": f"$GAMEDIR/drive_c/{slug}"
-        }
+        params = {"file": file_id, "dst": f"$GAMEDIR/drive_c/{slug}"}
         return self.extract(params)

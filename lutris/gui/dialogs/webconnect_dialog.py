@@ -1,8 +1,10 @@
 """isort:skip_file"""
+
 import os
 from gettext import gettext as _
 
 import gi
+
 try:
     gi.require_version("WebKit2", "4.1")
 except ValueError:
@@ -11,7 +13,6 @@ from gi.repository import WebKit2
 
 from lutris.gui.dialogs import ModalDialog
 
-
 DEFAULT_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:100.0) Gecko/20100101 Firefox/100.0"
 
 
@@ -19,7 +20,6 @@ class WebConnectDialog(ModalDialog):
     """Login form for external services"""
 
     def __init__(self, service, parent=None):
-
         self.context = WebKit2.WebContext.new()
         if "http_proxy" in os.environ:
             proxy = WebKit2.NetworkProxySettings.new(os.environ["http_proxy"])
@@ -103,7 +103,7 @@ class WebPopupDialog(ModalDialog):
     def __init__(self, webview, uri, parent=None):
         # pylint: disable=no-member
         self.parent = parent
-        super().__init__(title=_('Loading...'), parent=parent)
+        super().__init__(title=_("Loading..."), parent=parent)
         self.webview = webview
         self.webview.connect("ready-to-show", self.on_ready_webview)
         self.webview.connect("notify::title", self.on_available_webview_title)

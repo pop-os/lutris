@@ -1,15 +1,15 @@
 """Manipulates installer files"""
+
 import os
 from gettext import gettext as _
 from urllib.parse import urlparse
 
-from lutris import cache, settings
-from lutris.cache import save_to_cache
+from lutris.cache import get_cache_path, has_custom_cache_path, save_to_cache
 from lutris.gui.widgets.download_progress_box import DownloadProgressBox
 from lutris.installer.errors import ScriptingError
 from lutris.util import system
 from lutris.util.log import logger
-from lutris.util.strings import add_url_tags, gtk_safe
+from lutris.util.strings import gtk_safe_urls
 
 
 class InstallerFile:
@@ -126,7 +126,7 @@ class InstallerFile:
             label = url[3:].lstrip(":")
         else:
             label = url
-        return add_url_tags(gtk_safe(label))
+        return gtk_safe_urls(label)
 
     @property
     def cached_filename(self):
@@ -173,14 +173,9 @@ class InstallerFile:
         Returns:
             bool
         """
-        cache_path = cache.get_cache_path()
-        if not cache_path:
+        if self.url.startswith("N/A"):
             return False
-        if system.path_exists(cache_path):
-            return True
-
-        logger.warning("Cache path %s does not exist", cache_path)
-        return False
+        return has_custom_cache_path()
 
     @property
     def is_user_pga_caching_allowed(self):
@@ -191,9 +186,7 @@ class InstallerFile:
     @property
     def cache_path(self):
         """Return the directory used as a cache for the duration of the installation"""
-        _cache_path = cache.get_cache_path()
-        if not _cache_path:
-            _cache_path = os.path.join(settings.CACHE_DIR, "installer")
+        _cache_path = get_cache_path()
         url_parts = urlparse(self.url)
         if url_parts.netloc.endswith("gog.com"):
             folder = "gog"
@@ -202,16 +195,15 @@ class InstallerFile:
         return os.path.join(_cache_path, self.game_slug, folder)
 
     def prepare(self):
-        """Prepare the file for download, if we've not been redirected to an existing file."""
+        """Prepare the file for download. If we've not been redirected to an existing file,
+        and if we're using our own installer cache, we need to unsure that directory exists."""
         if not self._dest_file and not system.path_exists(self.cache_path):
             os.makedirs(self.cache_path)
 
     def create_download_progress_box(self):
-        return DownloadProgressBox({
-            "url": self.url,
-            "dest": self.dest_file,
-            "referer": self.referer
-        }, downloader=self.downloader)
+        return DownloadProgressBox(
+            {"url": self.url, "dest": self.dest_file, "referer": self.referer}, downloader=self.downloader
+        )
 
     def check_hash(self):
         """Checks the checksum of `file` and compare it to `value`
@@ -224,7 +216,7 @@ class InstallerFile:
         if not self.checksum or not self.dest_file:
             return
         try:
-            hash_type, expected_hash = self.checksum.split(':', 1)
+            hash_type, expected_hash = self.checksum.split(":", 1)
         except ValueError as err:
             raise ScriptingError(_("Invalid checksum, expected format (type:hash) "), self.checksum) from err
 
@@ -268,14 +260,11 @@ class InstallerFile:
 
     def remove_previous(self):
         """Remove file at already at destination, prior to starting the download."""
-        if (
-                not self.uses_pga_cache()
-                and system.path_exists(self.dest_file)
-        ):
+        if not self.uses_pga_cache() and system.path_exists(self.dest_file):
             # If we've previously downloaded a directory, we'll need to get rid of it
             # to download a file now. Since we are not using the cache, we don't keep
             # these files anyway - so it should be safe to just nuke and pave all this.
             if os.path.isdir(self.dest_file):
-                system.remove_folder(self.dest_file)
+                system.delete_folder(self.dest_file)
             else:
                 os.remove(self.dest_file)

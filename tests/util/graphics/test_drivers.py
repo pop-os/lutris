@@ -10,13 +10,11 @@ NVRM version: NVIDIA UNIX x86_64 Kernel Module  525.105.17  Tue Mar 28 18:02:59 
 GCC version:  gcc version 11.3.0 (Ubuntu 11.3.0-1ubuntu1~22.04)
 """
 PROPRIETARY_MODULE_OUTPUT = {
-    "nvrm": {
-        "vendor": "NVIDIA",
-        "platform": "UNIX",
-        "arch": "x86_64",
-        "version": "525.105.17",
-        "date": "Tue Mar 28 18:02:59 UTC 2023",
-    }
+    "vendor": "NVIDIA",
+    "platform": "UNIX",
+    "arch": "x86_64",
+    "version": "525.105.17",
+    "date": "Tue Mar 28 18:02:59 UTC 2023",
 }
 
 OPEN_MODULE_VERSION_FILE = """\
@@ -24,12 +22,10 @@ NVRM version: NVIDIA UNIX Open Kernel Module for x86_64  515.43.04  Release Buil
 GCC version:  gcc version 12.1.0 (GCC)
 """
 OPEN_MODULE_OUTPUT = {
-    "nvrm": {
-        "vendor": "NVIDIA",
-        "platform": "UNIX",
-        "arch": "x86_64",
-        "version": "515.43.04",
-    }
+    "vendor": "NVIDIA",
+    "platform": "UNIX",
+    "arch": "x86_64",
+    "version": "515.43.04",
 }
 DRIVER_VERSION_FILES = (
     ("Proprietary", PROPRIETARY_MODULE_VERSION_FILE, PROPRIETARY_MODULE_OUTPUT),
@@ -141,9 +137,7 @@ class TestGetNvidiaDriverInfo(unittest.TestCase):
 
     @patch(
         "builtins.open",
-        side_effect=PermissionError(
-            13, "Permission Denied: '/proc/driver/nvidia/version'"
-        ),
+        side_effect=PermissionError(13, "Permission Denied: '/proc/driver/nvidia/version'"),
     )
     @patch("os.path.exists", return_value=True)
     def test_file_errors(self, mock_path_exists, mock_open):
@@ -160,45 +154,35 @@ class TestGetNvidiaDriverInfo(unittest.TestCase):
         self.assertEqual(
             actual,
             {
-                "nvrm": {
-                    "vendor": "NVIDIA Corporation",
-                    "platform": "Linux",
-                    "arch": "x86_64",
-                    "version": "525.105.17",
-                }
+                "vendor": "NVIDIA Corporation",
+                "platform": "Linux",
+                "arch": "x86_64",
+                "version": "525.105.17",
             },
         )
 
 
 class TestGetNvidiaGpuIds(unittest.TestCase):
-
     sample_gpu_list = ["0000:01:00.0"]
 
     @patch("os.listdir", return_value=sample_gpu_list)
     def test_get_from_proc(self, mock_listdir):
-        self.assertEqual(
-            drivers.get_nvidia_gpu_ids(),
-            self.sample_gpu_list
-        )
+        self.assertEqual(drivers.get_nvidia_gpu_ids(), self.sample_gpu_list)
 
     @patch(
         "subprocess.run",
         return_value=subprocess.CompletedProcess(
             args=["lspci", "-D", "-n", "-d", "10de::0300"],
             returncode=0,
-            stdout="0000:01:00.0 0300: 10de:21c4 (rev a1)\n"
-        )
+            stdout="0000:01:00.0 0300: 10de:21c4 (rev a1)\n",
+        ),
     )
     @patch("os.listdir", side_effect=PermissionError())
     def test_get_from_lspci(self, mock_listdir, mock_lspci):
-        self.assertEqual(
-            drivers.get_nvidia_gpu_ids(),
-            self.sample_gpu_list
-        )
+        self.assertEqual(drivers.get_nvidia_gpu_ids(), self.sample_gpu_list)
 
 
 class TestGetNvidiaGpuInfo(unittest.TestCase):
-
     sample_gpu_id = "0000:01:00.0"
 
     @patch("builtins.open", return_value=io.StringIO(SAMPLE_GPU_INFORMATION))
@@ -207,13 +191,7 @@ class TestGetNvidiaGpuInfo(unittest.TestCase):
 
         self.assertEqual(result, SAMPLE_GPU_INFO_DICT)
 
-    @patch(
-        "subprocess.run",
-        return_value=subprocess.CompletedProcess(
-            [], 0,
-            stdout=SAMPLE_LSPCI_GPU
-        )
-    )
+    @patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout=SAMPLE_LSPCI_GPU))
     @patch("builtins.open", side_effect=PermissionError())
     def test_get_from_lspci_glxinfo(self, mock_open, mock_lspci):
         result = drivers.get_nvidia_gpu_info(self.sample_gpu_id)
@@ -231,12 +209,11 @@ class TestGetNvidiaGpuInfo(unittest.TestCase):
                 "Region 5": "I/O ports at e000 [size=128]",
                 "Kernel driver in use": "nvidia",
             },
-            result
+            result,
         )
 
 
 class TestIsNvidia(unittest.TestCase):
-
     def test_success_on_current_machine(self):
         self.assertIsInstance(drivers.is_nvidia(), bool)
 

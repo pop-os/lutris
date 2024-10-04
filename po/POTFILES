@@ -1,12 +1,14 @@
-# generated on 2023-08-19T14:21:44+00:00
+# generated on 2023-12-06T11:10:35+00:00
 
 share/applications/net.lutris.Lutris.desktop
 share/metainfo/net.lutris.Lutris.metainfo.xml
 
 share/lutris/ui/about-dialog.ui
 share/lutris/ui/dialog-lutris-login.ui
+share/lutris/ui/download-queue.ui
 share/lutris/ui/log-window.ui
 share/lutris/ui/lutris-window.ui
+share/lutris/ui/uninstall-dialog.ui
 
 lutris/api.py
 lutris/cache.py
@@ -24,6 +26,7 @@ lutris/game_actions.py
 lutris/game.py
 lutris/gui/addgameswindow.py
 lutris/gui/application.py
+lutris/gui/config/accounts_box.py
 lutris/gui/config/add_game_dialog.py
 lutris/gui/config/base_config_box.py
 lutris/gui/config/boxes.py
@@ -38,7 +41,9 @@ lutris/gui/config/runner_box.py
 lutris/gui/config/runner.py
 lutris/gui/config/runners_box.py
 lutris/gui/config/services_box.py
+lutris/gui/config/storage_box.py
 lutris/gui/config/sysinfo_box.py
+lutris/gui/config/updates_box.py
 lutris/gui/dialogs/cache.py
 lutris/gui/dialogs/delegates.py
 lutris/gui/dialogs/download.py
@@ -49,6 +54,7 @@ lutris/gui/dialogs/log.py
 lutris/gui/dialogs/runner_install.py
 lutris/gui/dialogs/uninstall_game.py
 lutris/gui/dialogs/webconnect_dialog.py
+lutris/gui/download_queue.py
 lutris/gui/__init__.py
 lutris/gui/installer/file_box.py
 lutris/gui/installer/files_box.py
@@ -76,6 +82,7 @@ lutris/gui/widgets/__init__.py
 lutris/gui/widgets/log_text_view.py
 lutris/gui/widgets/navigation_stack.py
 lutris/gui/widgets/notifications.py
+lutris/gui/widgets/progress_box.py
 lutris/gui/widgets/scaled_image.py
 lutris/gui/widgets/searchable_combobox.py
 lutris/gui/widgets/sidebar.py
@@ -216,6 +223,7 @@ lutris/util/mame/ini.py
 lutris/util/mame/__init__.py
 lutris/util/moddb.py
 lutris/util/nvidia.py
+lutris/util/portals.py
 lutris/util/process.py
 lutris/util/process_watcher.py
 lutris/util/resources.py
@@ -228,6 +236,7 @@ lutris/util/steam/config.py
 lutris/util/steam/__init__.py
 lutris/util/steam/log.py
 lutris/util/steam/shortcut.py
+lutris/util/steam/steamid.py
 lutris/util/steam/vdf/__init__.py
 lutris/util/steam/vdfutils.py
 lutris/util/steam/vdf/vdict.py
@@ -240,7 +249,6 @@ lutris/util/ubisoft/client.py
 lutris/util/ubisoft/consts.py
 lutris/util/ubisoft/helpers.py
 lutris/util/ubisoft/parser.py
-lutris/util/update_cache.py
 lutris/util/urlhandler.py
 lutris/util/wine/cabinstall.py
 lutris/util/wine/d3d_extras.py

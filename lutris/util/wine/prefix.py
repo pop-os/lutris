@@ -1,4 +1,5 @@
 """Wine prefix management"""
+
 import os
 
 from lutris.settings import get_lutris_directory_settings, set_lutris_directory_settings
@@ -18,8 +19,7 @@ DEFAULT_DLL_OVERRIDES = {
 
 def is_prefix(path):
     """Return True if the path is prefix"""
-    return os.path.isdir(os.path.join(path, "drive_c")) \
-        and os.path.exists(os.path.join(path, "user.reg"))
+    return os.path.isdir(os.path.join(path, "drive_c")) and os.path.exists(os.path.join(path, "user.reg"))
 
 
 def find_prefix(path):
@@ -28,6 +28,7 @@ def find_prefix(path):
     if not dir_path:
         logger.info("No path given, unable to guess prefix location")
         return
+    dir_path = os.path.expanduser(dir_path)
     while dir_path != "/" and dir_path:
         dir_path = os.path.dirname(dir_path)
         if is_prefix(dir_path):
@@ -47,7 +48,8 @@ class WinePrefixManager:
     def __init__(self, path):
         if not path:
             logger.warning("No path specified for Wine prefix")
-        self.path = path
+        # expanduser() just in case- it should already be expanded.
+        self.path = os.path.expanduser(path)
 
     def get_user_dir(self, default_user=None):
         user = default_user or os.getenv("USER") or "lutrisuser"
@@ -82,18 +84,17 @@ class WinePrefixManager:
             self.override_dll(dll, value)
         try:
             self.enable_desktop_disintegration()
-        except OSError as ex:
-            logger.error("Failed to setup desktop integration, the prefix may not be valid.")
-            logger.exception(ex)
+        except Exception as ex:
+            logger.exception("Failed to setup desktop integration, the prefix may not be valid: %s", ex)
 
     def create_user_symlinks(self):
         """Link together user profiles created by Wine and Proton"""
         wine_user_dir = self.get_user_dir()
         proton_user_dir = self.get_user_dir(default_user="steamuser")
-        if os.path.exists(wine_user_dir) and not os.path.exists(proton_user_dir):
-            os.symlink(wine_user_dir, proton_user_dir, target_is_directory=True)
-        elif os.path.exists(proton_user_dir) and not os.path.exists(wine_user_dir):
-            os.symlink(proton_user_dir, wine_user_dir, target_is_directory=True)
+        if system.path_exists(wine_user_dir) and not system.path_exists(proton_user_dir, check_symlinks=True):
+            system.create_symlink(wine_user_dir, proton_user_dir)
+        elif system.path_exists(proton_user_dir) and not system.path_exists(wine_user_dir, check_symlinks=True):
+            system.create_symlink(proton_user_dir, wine_user_dir)
 
     def get_registry_path(self, key):
         """Matches registry keys to a registry file
@@ -109,7 +110,7 @@ class WinePrefixManager:
     def get_key_path(self, key):
         for prefix in (self.hkcu_prefix, self.hklm_prefix):
             if key.startswith(prefix):
-                return key[len(prefix) + 1:]
+                return key[len(prefix) + 1 :]
         raise ValueError("The key {} is currently not supported by WinePrefixManager".format(key))
 
     def get_registry_key(self, key, subkey):
@@ -151,7 +152,7 @@ class WinePrefixManager:
             if not folder:
                 logger.warning("Couldn't load shell folder name for %s", key)
                 continue
-            desktop_folders.append(folder[folder.rfind("\\") + 1:])
+            desktop_folders.append(folder[folder.rfind("\\") + 1 :])
         return desktop_folders or DEFAULT_DESKTOP_FOLDERS
 
     def enable_desktop_integration_sandbox(self, desktop_dir):
@@ -180,7 +181,7 @@ class WinePrefixManager:
                     raise RuntimeError("Missing value desktop_dir=%s or item=%s" % (desktop_dir, item)) from ex
 
                 os.makedirs(src_path, exist_ok=True)
-                os.symlink(src_path, path)
+                system.create_symlink(src_path, path)
 
             self._set_desktop_integration_assignment(desktop_dir)
 
@@ -215,7 +216,7 @@ class WinePrefixManager:
         user_dir = self.user_dir
         home_dir = os.path.expanduser("~")
 
-        if system.path_exists(user_dir) and self._get_desktop_integration_assignment() != home_dir:
+        if system.path_exists(user_dir, check_symlinks=True) and self._get_desktop_integration_assignment() != home_dir:
             desktop_folders = self.get_desktop_folders()
             for i, item in enumerate(desktop_folders):
                 path = os.path.join(user_dir, item)
@@ -230,7 +231,7 @@ class WinePrefixManager:
                 if not src_path:
                     logger.error("No XDG entry found for %s, launcher not created", DESKTOP_XDG[i])
                 else:
-                    os.symlink(src_path, path)
+                    system.create_symlink(src_path, path)
 
             self._set_desktop_integration_assignment(home_dir)
 
@@ -252,7 +253,7 @@ class WinePrefixManager:
             # save the setting in the new form.
             obsolete_path = os.path.join(self.path, ".lutris_destkop_integration")
             if os.path.isfile(obsolete_path):
-                with open(obsolete_path, "r", encoding='utf-8') as f:
+                with open(obsolete_path, "r", encoding="utf-8") as f:
                     desktop_dir = f.read()
                 self._set_desktop_integration_assignment(desktop_dir)
                 os.unlink(obsolete_path)
@@ -310,7 +311,7 @@ class WinePrefixManager:
         obsolete_path = os.path.join(self.path, ".lutris_dpi_assignment")
         try:
             if os.path.isfile(obsolete_path):
-                with open(obsolete_path, "r", encoding='utf-8') as f:
+                with open(obsolete_path, "r", encoding="utf-8") as f:
                     dpi_assigned = int(f.read())
                 set_lutris_directory_settings(self.path, int(dpi_assigned))
                 os.unlink(obsolete_path)
@@ -319,8 +320,7 @@ class WinePrefixManager:
 
         settings = get_lutris_directory_settings(self.path)
 
-        key_paths = [self.hkcu_prefix + "/Software/Wine/Fonts",
-                     self.hkcu_prefix + "/Control Panel/Desktop"]
+        key_paths = [self.hkcu_prefix + "/Software/Wine/Fonts", self.hkcu_prefix + "/Control Panel/Desktop"]
 
         def assign_dpi(dpi):
             for key_path in key_paths:

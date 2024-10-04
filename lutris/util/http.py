@@ -1,4 +1,5 @@
 """HTTP utilities"""
+
 import json
 import os
 import socket
@@ -27,12 +28,11 @@ class HTTPError(Exception):
         self.code = code
 
 
-class UnauthorizedAccess(Exception):
+class UnauthorizedAccessError(Exception):
     """Exception raised for 401 HTTP errors"""
 
 
 class Request:
-
     def __init__(
         self,
         url,
@@ -95,9 +95,9 @@ class Request:
                 request = self.opener.open(req, timeout=self.timeout)
             else:
                 request = urllib.request.urlopen(req, timeout=self.timeout)  # pylint: disable=consider-using-with
-        except (urllib.error.HTTPError) as error:
+        except urllib.error.HTTPError as error:
             if error.code == 401:
-                raise UnauthorizedAccess("Access to %s denied" % self.url) from error
+                raise UnauthorizedAccessError("Access to %s denied" % self.url) from error
             raise HTTPError("%s" % error, code=error.code) from error
         except CertificateError as error:
             raise HTTPError("%s" % error, code=0) from error
@@ -138,6 +138,9 @@ class Request:
 
     def post(self, data=None):
         return self._request("POST", data)
+
+    def delete(self, data=None):
+        return self._request("DELETE", data)
 
     def write_to_file(self, path):
         content = self.content

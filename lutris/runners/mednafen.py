@@ -2,6 +2,8 @@
 import subprocess
 from gettext import gettext as _
 
+from lutris.exceptions import MissingGameExecutableError
+
 # Lutris Modules
 from lutris.runners.runner import Runner
 from lutris.util import system
@@ -55,9 +57,9 @@ class mednafen(Runner):
             "option": "main_file",
             "type": "file",
             "label": _("ROM file"),
-            "help":
-            _("The game data, commonly called a ROM image. \n"
-              "Mednafen supports GZIP and ZIP compressed ROMs."),
+            "help": _(
+                "The game data, commonly called a ROM image. \n" "Mednafen supports GZIP and ZIP compressed ROMs."
+            ),
         },
         {
             "option": "machine",
@@ -68,13 +70,7 @@ class mednafen(Runner):
         },
     ]
     runner_options = [
-        {
-            "option": "fs",
-            "type": "bool",
-            "section": _("Graphics"),
-            "label": _("Fullscreen"),
-            "default": False
-        },
+        {"option": "fs", "type": "bool", "section": _("Graphics"), "label": _("Fullscreen"), "default": False},
         {
             "option": "stretch",
             "type": "choice",
@@ -125,7 +121,7 @@ class mednafen(Runner):
                 ("hw:1", "hw:1,0"),
                 ("hw:2", "hw:2,0"),
             ),
-            "default": "sexyal-literal-default"
+            "default": "sexyal-literal-default",
         },
         {
             "option": "dont_map_controllers",
@@ -144,7 +140,7 @@ class mednafen(Runner):
         return ""
 
     def find_joysticks(self):
-        """ Detect connected joysticks and return their ids """
+        """Detect connected joysticks and return their ids"""
         joy_ids = []
         if not self.is_installed:
             return []
@@ -166,14 +162,14 @@ class mednafen(Runner):
 
         for joy in joy_list:
             index = joy.find("Unique ID:")
-            joy_id = joy[index + 11:]
+            joy_id = joy[index + 11 :]
             logger.debug("Joystick found id %s ", joy_id)
             joy_ids.append(joy_id)
         return joy_ids
 
     @staticmethod
     def set_joystick_controls(joy_ids, machine):
-        """ Setup joystick mappings per machine """
+        """Setup joystick mappings per machine"""
 
         # Get the controller mappings
         controller_mappings = get_controller_mappings()
@@ -521,9 +517,9 @@ class mednafen(Runner):
                 options.append(control)
 
         if not system.path_exists(rom):
-            return {"error": "FILE_NOT_FOUND", "file": rom}
+            raise MissingGameExecutableError(filename=rom)
 
-        command = [self.get_executable()]
+        command = self.get_command()
         for option in options:
             command.append(option)
         command.append(rom)

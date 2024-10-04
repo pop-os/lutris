@@ -1,5 +1,8 @@
 """Dolphin runner"""
+
 from gettext import gettext as _
+
+from lutris.exceptions import MissingGameExecutableError
 
 # Lutris Modules
 from lutris.runners.runner import Runner
@@ -12,7 +15,9 @@ class dolphin(Runner):
     description = _("GameCube and Wii emulator")
     human_name = _("Dolphin")
     platforms = PLATFORMS
-    require_libs = ["libOpenGL.so.0", ]
+    require_libs = [
+        "libOpenGL.so.0",
+    ]
     runnable_alone = True
     runner_executable = "dolphin/dolphin-emu"
     flatpak_id = "org.DolphinEmu.dolphin-emu"
@@ -42,6 +47,7 @@ class dolphin(Runner):
         {
             "option": "user_directory",
             "type": "directory_chooser",
+            "warn_if_non_writable_parent": True,
             "advanced": True,
             "label": _("Custom Global User Directory"),
         },
@@ -68,7 +74,7 @@ class dolphin(Runner):
         # Retrieve the path to the file
         iso = self.game_config.get("main_file") or ""
         if not system.path_exists(iso):
-            return {"error": "FILE_NOT_FOUND", "file": iso}
+            raise MissingGameExecutableError(filename=iso)
         command.extend(["-e", iso])
 
         return {"command": command}

@@ -1,4 +1,5 @@
 """Parser for the glxinfo utility"""
+
 from lutris.util.log import logger
 from lutris.util.system import read_process_output
 
@@ -40,7 +41,8 @@ class GlxInfo:
         # combining display and screen)
         output = self._output.replace("  screen", "\nscreen")
         for line in output.split("\n"):
-            if not line.strip():
+            # Skip blank lines, and error lines that may contain no ':'
+            if ":" not in line:
                 continue
 
             key, value = line.split(":", 1)
@@ -48,7 +50,7 @@ class GlxInfo:
             value = value.strip()
 
             if not value and key.startswith(("Extended_renderer_info", "Memory_info")):
-                self._section = key[key.index("(") + 1:-1]
+                self._section = key[key.index("(") + 1 : -1]
                 setattr(self, self._section, Container())
                 continue
             if self._section:

@@ -1,4 +1,5 @@
 """Wine commands for installers"""
+
 # pylint: disable=too-many-arguments
 import os
 import shlex
@@ -6,19 +7,26 @@ import time
 from gettext import gettext as _
 
 from lutris import runtime, settings
-from lutris.command import MonitoredCommand
-from lutris.exceptions import UnavailableRunnerError
+from lutris.monitored_command import MonitoredCommand
 from lutris.runners import import_runner
 from lutris.util import linux, system
 from lutris.util.log import logger
 from lutris.util.shell import get_shell_command
 from lutris.util.strings import split_arguments
+from lutris.util.wine import proton
 from lutris.util.wine.cabinstall import CabInstaller
 from lutris.util.wine.prefix import WinePrefixManager
 from lutris.util.wine.wine import (
-    WINE_DEFAULT_ARCH, WINE_DIR, detect_arch, detect_prefix_arch, get_overrides_env, get_real_executable,
-    is_installed_systemwide
+    WINE_DEFAULT_ARCH,
+    WINE_DIR,
+    detect_arch,
+    get_overrides_env,
+    get_real_executable,
+    is_installed_systemwide,
+    is_prefix_directory,
 )
+
+GE_PROTON_LATEST = _("GE-Proton (Latest)")
 
 
 def set_regedit(
@@ -43,7 +51,7 @@ def set_regedit(
     }
     # Make temporary reg file
     reg_path = os.path.join(settings.CACHE_DIR, "winekeys.reg")
-    with open(reg_path, "w", encoding='utf-8') as reg_file:
+    with open(reg_path, "w", encoding="utf-8") as reg_file:
         reg_file.write('REGEDIT4\n\n[%s]\n"%s"=%s\n' % (path, key, formatted_value[type]))
     logger.debug("Setting [%s]:%s=%s", path, key, formatted_value[type])
     set_regedit_file(reg_path, wine_path=wine_path, prefix=prefix, arch=arch)
@@ -80,14 +88,15 @@ def delete_registry_key(key, wine_path=None, prefix=None, arch=WINE_DEFAULT_ARCH
     )
 
 
-def create_prefix(  # noqa: C901
+def create_prefix(
     prefix,
     wine_path=None,
     arch=WINE_DEFAULT_ARCH,
     overrides=None,
     install_gecko=None,
     install_mono=None,
-    runner=None
+    runner=None,
+    env=None,
 ):
     """Create a new Wine prefix."""
     # pylint: disable=too-many-locals
@@ -114,17 +123,16 @@ def create_prefix(  # noqa: C901
         if not runner:
             runner = import_runner("wine")()
         wine_path = runner.get_executable()
-    if not wine_path:
-        logger.error("Wine not found, can't create prefix")
-        return
-    wineboot_path = os.path.join(os.path.dirname(wine_path), "wineboot")
-    if not system.path_exists(wineboot_path):
-        logger.error(
-            "No wineboot executable found in %s, "
-            "your wine installation is most likely broken",
-            wine_path,
-        )
-        return
+    logger.info("Winepath: %s", wine_path)
+
+    if not proton.is_proton_path(wine_path):
+        wineboot_path = os.path.join(os.path.dirname(wine_path), "wineboot")
+        if not system.path_exists(wineboot_path):
+            logger.error(
+                "No wineboot executable found in %s, " "your wine installation is most likely broken",
+                wine_path,
+            )
+            return
 
     wineenv = {
         "WINEARCH": arch,
@@ -141,10 +149,23 @@ def create_prefix(  # noqa: C901
         wineenv["WINE_SKIP_MONO_INSTALLATION"] = "1"
         overrides["mscoree"] = "disabled"
 
-    system.execute([wineboot_path], env=wineenv)
+    if not proton.is_proton_path(wine_path):
+        system.execute([wineboot_path], env=wineenv)
+    else:
+        wineenv["GAMEID"] = proton.DEFAULT_GAMEID
+        wineenv["ULWGL_LOG"] = "debug"
+        wineenv["WINEARCH"] = "win64"
+        wineenv["PROTONPATH"] = proton.get_proton_path_from_bin(wine_path)
+        command = MonitoredCommand([proton.get_umu_path(), "createprefix"], env=wineenv)
+        command.start()
+
     for loop_index in range(1000):
         time.sleep(0.5)
-        if system.path_exists(os.path.join(prefix, "user.reg")):
+        if (
+            system.path_exists(os.path.join(prefix, "user.reg"))
+            and system.path_exists(os.path.join(prefix, "userdef.reg"))
+            and system.path_exists(os.path.join(prefix, "system.reg"))
+        ):
             break
         if loop_index == 60:
             logger.warning("Wine prefix creation is taking longer than expected...")
@@ -160,22 +181,25 @@ def winekill(prefix, arch=WINE_DEFAULT_ARCH, wine_path=None, env=None, initial_p
     """Kill processes in Wine prefix."""
 
     initial_pids = initial_pids or []
-
-    if not wine_path:
-        if not runner:
-            runner = import_runner("wine")()
-        wine_path = runner.get_executable()
-    wine_root = os.path.dirname(wine_path)
+    steam_data_dir = os.path.expanduser("~/.local/share/Steam/compatibilitytools.d")
     if not env:
         env = {"WINEARCH": arch, "WINEPREFIX": prefix}
-    command = [os.path.join(wine_root, "wineserver"), "-k"]
+    if wine_path == GE_PROTON_LATEST and os.path.exists(f"{steam_data_dir}/UMU-Latest"):
+        proton_version = os.path.realpath(f"{steam_data_dir}/UMU-Latest")
+        command = [os.path.join(proton_version, "files", "bin", "wineserver"), "-k"]
+        env["GAMEID"] = proton.DEFAULT_GAMEID
+        env["WINEPREFIX"] = prefix
+    else:
+        if not wine_path:
+            if not runner:
+                runner = import_runner("wine")()
+            wine_path = runner.get_executable()
+        wine_root = os.path.dirname(wine_path)
 
-    logger.debug("Killing all wine processes: %s", command)
-    logger.debug("\tWine prefix: %s", prefix)
-    logger.debug("\tWine arch: %s", arch)
-    if initial_pids:
-        logger.debug("\tInitial pids: %s", initial_pids)
-
+        command = [os.path.join(wine_root, "wineserver"), "-k"]
+        logger.debug("Killing all wine processes (%s) in prefix %s: %s", initial_pids, prefix, command)
+    logger.debug(command)
+    logger.debug(" ".join(command))
     system.execute(command, env=env, quiet=True)
 
     logger.debug("Waiting for wine processes to terminate")
@@ -212,7 +236,7 @@ def use_lutris_runtime(wine_path, force_disable=False):
 
 
 # pragma pylint: disable=too-many-locals
-def wineexec(  # noqa: C901
+def wineexec(
     executable,
     args="",
     wine_path=None,
@@ -227,7 +251,7 @@ def wineexec(  # noqa: C901
     disable_runtime=False,
     env=None,
     overrides=None,
-    runner=None
+    runner=None,
 ):
     """
     Execute a Wine command.
@@ -266,8 +290,6 @@ def wineexec(  # noqa: C901
 
     if not wine_path:
         wine_path = runner.get_executable()
-    if not wine_path:
-        raise UnavailableRunnerError(_("Wine is not installed"))
 
     if not working_dir:
         if os.path.isfile(executable):
@@ -280,7 +302,7 @@ def wineexec(  # noqa: C901
     # Create prefix if necessary
     if arch not in ("win32", "win64"):
         arch = detect_arch(prefix, wine_path)
-    if not detect_prefix_arch(prefix):
+    if not is_prefix_directory(prefix):
         wine_bin = winetricks_wine if winetricks_wine else wine_path
         create_prefix(prefix, wine_path=wine_bin, arch=arch, runner=runner)
 
@@ -312,9 +334,18 @@ def wineexec(  # noqa: C901
     if overrides:
         wineenv["WINEDLLOVERRIDES"] = get_overrides_env(overrides)
 
+    # TODO: Move this to somewhere that a reference to the game object
+    if proton.is_proton_path(wine_path):
+        game = None
+        wineenv["GAMEID"] = proton.get_game_id(game)
+        wineenv["PROTONPATH"] = proton.get_proton_path_from_bin(wine_path)
+
     baseenv = runner.get_env(disable_runtime=disable_runtime)
     baseenv.update(wineenv)
     baseenv.update(env)
+
+    if proton.is_proton_path(wine_path):
+        wine_path = proton.get_umu_path()
 
     command_parameters = [wine_path]
     if executable:
@@ -345,10 +376,8 @@ def find_winetricks(env=None, system_winetricks=False):
     """Find winetricks path."""
     winetricks_path = os.path.join(settings.RUNTIME_DIR, "winetricks/winetricks")
     if system_winetricks or not system.path_exists(winetricks_path):
-        winetricks_path = system.find_executable("winetricks")
+        winetricks_path = system.find_required_executable("winetricks")
         working_dir = None
-        if not winetricks_path:
-            raise RuntimeError("No installation of winetricks found")
     else:
         # We will use our own zenity if available, which is here, and it
         # also needs a data file in this directory. We have to set the
@@ -374,7 +403,7 @@ def winetricks(
     env=None,
     disable_runtime=False,
     system_winetricks=False,
-    runner=None
+    runner=None,
 ):
     """Execute winetricks."""
     winetricks_path, working_dir, env = find_winetricks(env, system_winetricks)
@@ -385,6 +414,10 @@ def winetricks(
         if not runner:
             runner = import_runner("wine")()
         winetricks_wine = runner.get_executable()
+    # We only need to perform winetricks if not using umu/proton. umu uses protonfixes
+    if proton.is_proton_path(wine_path):
+        logger.warning("Winetricks is currently not supported with Proton")
+        return
     if arch not in ("win32", "win64"):
         arch = detect_arch(prefix, winetricks_wine)
     args = app
@@ -402,7 +435,7 @@ def winetricks(
         config=config,
         env=env,
         disable_runtime=disable_runtime,
-        runner=runner
+        runner=runner,
     )
 
 
@@ -422,7 +455,7 @@ def winecfg(wine_path=None, prefix=None, arch=WINE_DEFAULT_ARCH, config=None, en
         config=config,
         env=env,
         include_processes=["winecfg.exe"],
-        runner=runner
+        runner=runner,
     )
 
 
@@ -459,4 +492,4 @@ def open_wine_terminal(terminal, wine_path, prefix, env, system_winetricks):
         env["PATH"] = "%s:%s" % (wine_directory, path)
     shell_command = get_shell_command(prefix, env, aliases)
     terminal = terminal or linux.get_default_terminal()
-    system.execute([terminal, "-e", shell_command])
+    system.spawn([terminal, "-e", shell_command])

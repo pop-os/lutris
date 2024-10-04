@@ -1,8 +1,10 @@
 """Runner for MAME"""
+
 import os
 from gettext import gettext as _
 
 from lutris import runtime, settings
+from lutris.exceptions import GameConfigError
 from lutris.runners.runner import Runner
 from lutris.util import system
 from lutris.util.jobs import AsyncCall
@@ -59,7 +61,6 @@ def get_system_choices(include_year=True):
 
 
 class mame(Runner):  # pylint: disable=invalid-name
-
     """MAME runner"""
 
     human_name = _("MAME")
@@ -83,7 +84,7 @@ class mame(Runner):  # pylint: disable=invalid-name
             "type": "choice_with_search",
             "label": _("Machine"),
             "choices": get_system_choices,
-            "help": _("The emulated machine.")
+            "help": _("The emulated machine."),
         },
         {
             "option": "device",
@@ -126,12 +127,19 @@ class mame(Runner):  # pylint: disable=invalid-name
             "help": _("Command line arguments used when launching the game"),
         },
         {
+            "option": "slots",
+            "type": "string",
+            "label": ("Slot System"),
+            "help": ("For slot devices that is needed for romsloads"),
+        },
+        {
             "option": "autoboot_command",
             "type": "string",
             "section": _("Autoboot"),
             "label": _("Autoboot command"),
-            "help": _("Autotype this command when the system has started, "
-                      "an enter keypress is automatically added."),
+            "help": _(
+                "Autotype this command when the system has started, " "an enter keypress is automatically added."
+            ),
         },
         {
             "option": "autoboot_delay",
@@ -140,7 +148,7 @@ class mame(Runner):  # pylint: disable=invalid-name
             "label": _("Delay before entering autoboot command"),
             "min": 0,
             "max": 120,
-        }
+        },
     ]
 
     runner_options = [
@@ -166,8 +174,7 @@ class mame(Runner):  # pylint: disable=invalid-name
             "type": "bool",
             "section": _("Graphics"),
             "label": _("CRT effect ()"),
-            "help": _("Applies a CRT effect to the screen."
-                      "Requires OpenGL renderer."),
+            "help": _("Applies a CRT effect to the screen." "Requires OpenGL renderer."),
             "default": False,
         },
         {
@@ -189,9 +196,9 @@ class mame(Runner):  # pylint: disable=invalid-name
             "type": "bool",
             "section": _("Graphics"),
             "label": _("Wait for VSync"),
-            "help":
-            _("Enable waiting for  the  start  of  vblank  before "
-              "flipping  screens; reduces tearing effects."),
+            "help": _(
+                "Enable waiting for  the  start  of  vblank  before " "flipping  screens; reduces tearing effects."
+            ),
             "advanced": True,
             "default": False,
         },
@@ -213,8 +220,7 @@ class mame(Runner):  # pylint: disable=invalid-name
             ],
             "default": "SCRLOCK",
             "advanced": True,
-            "help": _("Key to switch between Full Keyboard Mode and "
-                      "Partial Keyboard Mode (default: Scroll Lock)"),
+            "help": _("Key to switch between Full Keyboard Mode and " "Partial Keyboard Mode (default: Scroll Lock)"),
         },
     ]
 
@@ -231,7 +237,6 @@ class mame(Runner):  # pylint: disable=invalid-name
         return self._platforms
 
     def install(self, install_ui_delegate, version=None, callback=None):
-
         def on_runner_installed(*args):
             AsyncCall(write_mame_xml, notify_mame_xml)
 
@@ -247,17 +252,16 @@ class mame(Runner):  # pylint: disable=invalid-name
 
     def write_xml_list(self):
         """Write the full game list in XML to disk"""
+        env = runtime.get_env()
+        listxml_command = self.get_command() + ["-listxml"]
         os.makedirs(self.cache_dir, exist_ok=True)
-        output = system.execute(
-            self.get_command() + ["-listxml"],
-            env=runtime.get_env()
-        )
+        output, error_output = system.execute_with_error(listxml_command, env=env)
         if output:
-            with open(self.xml_path, "w", encoding='utf-8') as xml_file:
+            with open(self.xml_path, "w", encoding="utf-8") as xml_file:
                 xml_file.write(output)
             logger.info("MAME XML list written to %s", self.xml_path)
         else:
-            logger.warning("Couldn't get any output for mame -listxml")
+            logger.warning("Couldn't get any output for mame -listxml: %s", error_output)
 
     def get_platform(self):
         selected_platform = self.game_config.get("platform")
@@ -282,7 +286,7 @@ class mame(Runner):  # pylint: disable=invalid-name
             system.execute(
                 self.get_command() + ["-createconfig", "-inipath", self.config_dir],
                 env=runtime.get_env(),
-                cwd=self.working_dir
+                cwd=self.working_dir,
             )
 
     def get_shader_params(self, shader_dir, shaders):
@@ -290,11 +294,7 @@ class mame(Runner):  # pylint: disable=invalid-name
         params = []
         shader_path = os.path.join(self.working_dir, "shaders", shader_dir)
         for index, shader in enumerate(shaders):
-            params += [
-                "-gl_glsl",
-                "-glsl_shader_mame%s" % index,
-                os.path.join(shader_path, shader)
-            ]
+            params += ["-gl_glsl", "-glsl_shader_mame%s" % index, os.path.join(shader_path, shader)]
         return params
 
     def play(self):
@@ -317,9 +317,11 @@ class mame(Runner):  # pylint: disable=invalid-name
             if rompath:
                 command += ["-rompath", rompath]
             command.append(self.game_config["machine"])
+            for slot_arg in split_arguments(self.game_config.get("slots")):
+                command.append(slot_arg)
             device = self.game_config.get("device")
             if not device:
-                return {'error': "CUSTOM", "text": "No device is set for machine %s" % self.game_config["machine"]}
+                raise GameConfigError(_("No device is set for machine %s") % self.game_config["machine"])
             rom = self.game_config.get("main_file")
             if rom:
                 command += ["-" + device, rom]
@@ -329,7 +331,7 @@ class mame(Runner):  # pylint: disable=invalid-name
                 rompath = self.runner_config.get("rompath")
             rom = os.path.basename(self.game_config.get("main_file"))
             if not rompath:
-                return {'error': 'PATH_NOT_SET', 'path': 'rompath'}
+                raise GameConfigError(_("The path '%s' is not set. please set it in the options.") % "rompath")
             command += ["-rompath", rompath, rom]
 
         if self.game_config.get("autoboot_command"):

@@ -5,7 +5,7 @@ import time
 from shutil import copyfile
 
 from lutris import settings, sysoptions
-from lutris.runners import InvalidRunner, import_runner
+from lutris.runners import InvalidRunnerError, import_runner
 from lutris.util.log import logger
 from lutris.util.system import path_exists
 from lutris.util.yaml import read_yaml_from_file, write_yaml_to_file
@@ -36,7 +36,6 @@ def duplicate_game_config(game_slug: str, source_config_id: str):
 
 
 class LutrisConfig:
-
     """Class where all the configuration handling happens.
 
     Description
@@ -122,7 +121,7 @@ class LutrisConfig:
     def runner_config_path(self):
         if not self.runner_slug:
             return None
-        return os.path.join(settings.CONFIG_DIR, "runners/%s.yml" % self.runner_slug)
+        return os.path.join(settings.RUNNERS_CONFIG_DIR, "%s.yml" % self.runner_slug)
 
     @property
     def game_config_path(self):
@@ -223,7 +222,8 @@ class LutrisConfig:
             config_path = self.game_config_path
         else:
             raise ValueError("Invalid config level '%s'" % self.level)
-
+        # Remove keys with no values from config before saving
+        config = {key: value for key, value in config.items() if value}
         logger.debug("Saving %s config to %s", self, config_path)
         write_yaml_to_file(config, config_path)
         self.initialize_config()
@@ -234,10 +234,17 @@ class LutrisConfig:
         defaults = {}
         for option, params in options_dict.items():
             if "default" in params:
-                defaults[option] = params["default"]
+                default = params["default"]
+                if callable(default):
+                    try:
+                        default = default()
+                    except Exception as ex:
+                        logger.exception("Unable to generate a default for '%s': %s", option, ex)
+                        continue
+                defaults[option] = default
         return defaults
 
-    def options_as_dict(self, options_type):
+    def options_as_dict(self, options_type: str) -> dict:
         """Convert the option list to a dict with option name as keys"""
         if options_type == "system":
             options = (
@@ -245,12 +252,12 @@ class LutrisConfig:
             )
         else:
             if not self.runner_slug:
-                return None
+                return {}
             attribute_name = options_type + "_options"
 
             try:
                 runner = import_runner(self.runner_slug)
-            except InvalidRunner:
+            except InvalidRunnerError:
                 options = {}
             else:
                 if not getattr(runner, attribute_name):

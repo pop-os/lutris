@@ -1,4 +1,5 @@
 """Linux specific platform code"""
+
 import json
 import os
 import platform
@@ -34,15 +35,8 @@ SYSTEM_COMPONENTS = {
         "fluidsynth",
     ],
     "OPTIONAL_COMMANDS": [
-        "optirun",
-        "primusrun",
-        "pvkrun",
-        "pulseaudio",
         "lsi-steam",
-        "Xephyr",
         "nvidia-smi",
-        "strangle",
-        "xgamma",
     ],
     "TERMINALS": [
         "xterm",
@@ -73,6 +67,7 @@ SYSTEM_COMPONENTS = {
         "alacritty",
         "kgx",
         "deepin-terminal",
+        "wezterm",
     ],
     "LIBRARIES": {
         "OPENGL": ["libGL.so.1"],
@@ -121,7 +116,7 @@ class LinuxSystem:  # pylint: disable=too-many-public-methods
                     logger.warning("Command '%s' not found on your system", command)
 
         # Detect if system is 64bit capable
-        self.is_64_bit = sys.maxsize > 2 ** 32
+        self.is_64_bit = sys.maxsize > 2**32
         self.arch = self.get_arch()
         self.shared_libraries = self.get_shared_libraries()
         self.populate_libraries()
@@ -150,7 +145,7 @@ class LinuxSystem:  # pylint: disable=too-many-public-methods
         """Parse the output of /proc/cpuinfo"""
         cpus = [{}]
         cpu_index = 0
-        with open("/proc/cpuinfo", encoding='utf-8') as cpuinfo:
+        with open("/proc/cpuinfo", encoding="utf-8") as cpuinfo:
             for line in cpuinfo.readlines():
                 if not line.strip():
                     cpu_index += 1
@@ -164,20 +159,18 @@ class LinuxSystem:  # pylint: disable=too-many-public-methods
     def get_drives():
         """Return a list of drives with their filesystems"""
         lsblk_output = system.read_process_output(["lsblk", "-f", "--json"])
-        return [
-            drive
-            for drive in json.loads(lsblk_output)["blockdevices"]
-            if drive["fstype"] != "squashfs"
-        ]
+        if not lsblk_output:
+            return []
+        return [drive for drive in json.loads(lsblk_output)["blockdevices"] if drive["fstype"] != "squashfs"]
 
     @staticmethod
     def get_ram_info():
         """Parse the output of /proc/meminfo and return RAM information in kB"""
         mem = {}
-        with open("/proc/meminfo", encoding='utf-8') as meminfo:
+        with open("/proc/meminfo", encoding="utf-8") as meminfo:
             for line in meminfo.readlines():
                 key, value = line.split(":", 1)
-                mem[key.strip()] = value.strip('kB \n')
+                mem[key.strip()] = value.strip("kB \n")
         return mem
 
     @staticmethod
@@ -204,7 +197,7 @@ class LinuxSystem:  # pylint: disable=too-many-public-methods
     @staticmethod
     def get_kernel_version():
         """Get kernel info from /proc/version"""
-        with open("/proc/version", encoding='utf-8') as kernel_info:
+        with open("/proc/version", encoding="utf-8") as kernel_info:
             info = kernel_info.readlines()[0]
             version = info.split(" ")[2]
         return version
@@ -212,7 +205,7 @@ class LinuxSystem:  # pylint: disable=too-many-public-methods
     def gamemode_available(self):
         """Return whether gamemode is available"""
         # Current versions of gamemode use gamemoderun
-        if system.find_executable("gamemoderun"):
+        if system.can_find_executable("gamemoderun"):
             return True
         # This is for old versions of gamemode only
         if self.is_feature_supported("GAMEMODE"):
@@ -220,7 +213,7 @@ class LinuxSystem:  # pylint: disable=too-many-public-methods
         return False
 
     def nvidia_gamescope_support(self):
-        """ Return whether gamescope is supported if we're on nvidia"""
+        """Return whether gamescope is supported if we're on nvidia"""
         if not drivers.is_nvidia():
             return True
 
@@ -229,19 +222,20 @@ class LinuxSystem:  # pylint: disable=too-many-public-methods
         try:
             minimum_nvidia_version_supported = 515
             driver_info = drivers.get_nvidia_driver_info()
-            driver_version = driver_info["nvrm"]["version"]
+            driver_version = driver_info["version"]
+            if not driver_version:
+                return False
             major_version = int(driver_version.split(".")[0])
             return major_version >= minimum_nvidia_version_supported
         except Exception as ex:
             logger.exception("Unable to determine NVidia version: %s", ex)
             return False
 
-    @property
     def has_steam(self):
         """Return whether Steam is installed locally"""
         return (
-            bool(system.find_executable("steam"))
-            or bool(system.find_executable("com.valvesoftware.Steam"))
+            system.can_find_executable("steam")
+            or system.can_find_executable("com.valvesoftware.Steam")
             or os.path.exists(os.path.expanduser("~/.steam/steam/ubuntu12_32/steam"))
         )
 
@@ -250,7 +244,6 @@ class LinuxSystem:  # pylint: disable=too-many-public-methods
         """Return the display server used"""
         return os.environ.get("XDG_SESSION_TYPE", "unknown")
 
-    @property
     def is_flatpak(self):
         """Check is we are running inside Flatpak sandbox"""
         return system.path_exists("/.flatpak-info")
@@ -277,8 +270,7 @@ class LinuxSystem:  # pylint: disable=too-many-public-methods
         while devices:
             device = devices.pop()
             devices.extend(device.get("children", []))
-            if (mount_point in device.get("mountpoints", [])
-                    or mount_point == device.get("mountpoint")):
+            if mount_point in device.get("mountpoints", []) or mount_point == device.get("mountpoint"):
                 return device["fstype"]
         return None
 
@@ -465,7 +457,7 @@ def gather_system_info():
     if drivers.is_nvidia():
         system_info["nvidia_driver"] = drivers.get_nvidia_driver_info()
         system_info["nvidia_gpus"] = [drivers.get_nvidia_gpu_info(gpu_id) for gpu_id in drivers.get_nvidia_gpu_ids()]
-    system_info["gpus"] = [drivers.get_gpu_info(gpu) for gpu in drivers.get_gpus()]
+    system_info["gpus"] = [drivers.get_gpu_info(gpu) for gpu in drivers.get_gpu_cards()]
     system_info["env"] = dict(os.environ)
     system_info["missing_libs"] = LINUX_SYSTEM.get_missing_libs()
     system_info["cpus"] = LINUX_SYSTEM.get_cpus()
@@ -478,13 +470,13 @@ def gather_system_info():
     return system_info
 
 
-def gather_system_info_str():
+def gather_system_info_dict():
     """Get all relevant system information already formatted as a string"""
     system_info = gather_system_info()
     system_info_readable = {}
     # Add system information
     system_dict = {}
-    system_dict["OS"] = ' '.join(system_info["dist"])
+    system_dict["OS"] = " ".join(system_info["dist"])
     system_dict["Arch"] = system_info["arch"]
     system_dict["Kernel"] = system_info["kernel"]
     system_dict["Desktop"] = system_info["env"].get("XDG_CURRENT_DESKTOP", "Not found")
@@ -518,23 +510,13 @@ def gather_system_info_str():
     if vkquery.is_vulkan_supported():
         graphics_dict["Vulkan Version"] = vkquery.format_version(vkquery.get_vulkan_api_version())
 
-        graphics_dict["Vulkan Drivers"] = ", ".join({
-            "%s (%s)" % (name, vkquery.format_version(version))
-            for name, version
-            in vkquery.get_device_info()
-        })
+        graphics_dict["Vulkan Drivers"] = ", ".join(
+            {"%s (%s)" % (name, vkquery.format_version(version)) for name, version in vkquery.get_device_info()}
+        )
     else:
         graphics_dict["Vulkan"] = "Not Supported"
     system_info_readable["Graphics"] = graphics_dict
-
-    output = ''
-    for section, dictionary in system_info_readable.items():
-        output += '[%s]\n' % section
-        for key, value in dictionary.items():
-            tabs = " " * (16 - len(key))
-            output += '%s:%s%s\n' % (key, tabs, value)
-        output += '\n'
-    return output
+    return system_info_readable
 
 
 def get_terminal_apps():

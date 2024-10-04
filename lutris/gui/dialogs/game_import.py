@@ -2,29 +2,25 @@ from collections import OrderedDict
 from copy import deepcopy
 from gettext import gettext as _
 
-from gi.repository import GLib, Gtk
+from gi.repository import Gio, GLib, Gtk
 
 from lutris.config import write_game_config
 from lutris.database.games import add_game
 from lutris.game import Game
 from lutris.gui.dialogs import ModelessDialog
 from lutris.scanners.default_installers import DEFAULT_INSTALLERS
-from lutris.scanners.lutris import get_path_cache
 from lutris.scanners.tosec import clean_rom_name, guess_platform, search_tosec_by_md5
 from lutris.services.lutris import download_lutris_media
 from lutris.util.jobs import AsyncCall
 from lutris.util.log import logger
+from lutris.util.path_cache import get_path_cache
 from lutris.util.strings import gtk_safe, slugify
 from lutris.util.system import get_md5_hash, get_md5_in_zip
 
 
 class ImportGameDialog(ModelessDialog):
     def __init__(self, files, parent=None) -> None:
-        super().__init__(
-            _("Import a game"),
-            parent=parent,
-            border_width=10
-        )
+        super().__init__(_("Import a game"), parent=parent, border_width=10)
         self.files = files
         self.progress_labels = {}
         self.checksum_labels = {}
@@ -41,25 +37,23 @@ class ImportGameDialog(ModelessDialog):
 
         scrolledwindow = Gtk.ScrolledWindow(child=self.get_file_labels_listbox(files))
         scrolledwindow.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        frame = Gtk.Frame(
-            shadow_type=Gtk.ShadowType.ETCHED_IN,
-            child=scrolledwindow)
+        frame = Gtk.Frame(shadow_type=Gtk.ShadowType.ETCHED_IN, child=scrolledwindow)
         self.get_content_area().pack_start(frame, True, True, 6)
 
         self.close_button = self.add_button(Gtk.STOCK_STOP, Gtk.ResponseType.CANCEL)
         key, mod = Gtk.accelerator_parse("Escape")
         self.close_button.add_accelerator("clicked", self.accelerators, key, mod, Gtk.AccelFlags.VISIBLE)
-        self.connect("response", self.on_response)
 
         self.show_all()
         self.search_call = AsyncCall(self.search_checksums, self.search_result_finished)
 
-    def on_response(self, _widget, response):
+    def on_response(self, dialog, response: Gtk.ResponseType) -> None:
         if response in (Gtk.ResponseType.CLOSE, Gtk.ResponseType.CANCEL, Gtk.ResponseType.DELETE_EVENT):
             if self.search_call:
                 self.search_call.stop_request.set()
-            else:
-                self.destroy()
+                return  # don't actually close the dialog
+
+        super().on_response(dialog, response)
 
     def get_file_labels_listbox(self, files):
         listbox = Gtk.ListBox(vexpand=True)
@@ -204,8 +198,7 @@ class ImportGameDialog(ModelessDialog):
         except Exception as ex:
             logger.exception(_("Failed to import a ROM: %s"), ex)
             error_label = self.error_labels[filename]
-            error_label.set_markup(
-                "<span style=\"italic\" foreground=\"red\">%s</span>" % gtk_safe(str(ex)))
+            error_label.set_markup('<span style="italic" foreground="red">%s</span>' % gtk_safe(str(ex)))
             error_label.show()
 
         return False
@@ -216,7 +209,10 @@ class ImportGameDialog(ModelessDialog):
         launch_button.connect("clicked", self.on_launch_clicked, game)
 
     def on_launch_clicked(self, _button, game):
-        game.emit("game-launch")
+        # We can't use this window as the delegate because we
+        # are destroying it.
+        application = Gio.Application.get_default()
+        game.launch(application.launch_ui_delegate)
         self.destroy()
 
     def display_existing_game_info(self, filename, game):
@@ -253,7 +249,8 @@ class ImportGameDialog(ModelessDialog):
             installer = deepcopy(DEFAULT_INSTALLERS[self.platform])
         except KeyError as error:
             raise RuntimeError(
-                _("Lutris does not have a default installer for the '%s' platform.") % self.platform) from error
+                _("Lutris does not have a default installer for the '%s' platform.") % self.platform
+            ) from error
 
         for key, value in installer["game"].items():
             if value == "rom":
@@ -267,7 +264,7 @@ class ImportGameDialog(ModelessDialog):
             directory="",
             installed=1,
             installer_slug="%s-%s" % (slug, installer["runner"]),
-            configpath=configpath
+            configpath=configpath,
         )
         download_lutris_media(slug)
         return game_id

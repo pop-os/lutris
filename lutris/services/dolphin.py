@@ -1,6 +1,7 @@
 import json
 import os
 from gettext import gettext as _
+from typing import List
 
 from PIL import Image
 
@@ -18,8 +19,7 @@ class DolphinBanner(ServiceMedia):
     service = "dolphin"
     source = "local"
     size = (96, 32)
-    file_pattern = "%s.png"
-    file_format = "jpeg"
+    file_patterns = ["%s.png"]
     dest_path = os.path.join(settings.CACHE_DIR, "dolphin/banners/small")
 
 
@@ -27,10 +27,9 @@ class DolphinService(BaseService):
     id = "dolphin"
     icon = "dolphin"
     name = _("Dolphin")
+    runner = "dolphin"
     local = True
-    medias = {
-        "icon": DolphinBanner
-    }
+    medias = {"icon": DolphinBanner}
 
     def load(self):
         if not system.path_exists(DOLPHIN_GAME_CACHE_FILE):
@@ -47,23 +46,24 @@ class DolphinService(BaseService):
             "name": db_game["name"],
             "version": "Dolphin",
             "slug": db_game["slug"],
-            "game_slug": slugify(db_game["name"]),
-            "runner": "dolphin",
+            "game_slug": self.get_installed_slug(db_game),
+            "runner": self.get_installed_runner_name(db_game),
             "script": {
-                "game": {
-                    "main_file": details["path"],
-                    "platform": details["platform"]
-                },
-            }
+                "game": {"main_file": details["path"], "platform": details["platform"]},
+            },
         }
+
+    def get_installed_runner_name(self, db_game):
+        return self.runner
 
     def get_game_directory(self, installer):
         """Pull install location from installer"""
         return os.path.dirname(installer["script"]["game"]["main_file"])
 
-    def get_game_platforms(self, db_game):
-        if "details" in db_game:
-            details = json.loads(db_game.get("details"))
+    def get_game_platforms(self, db_game: dict) -> List[str]:
+        details_json = db_game.get("details")
+        if details_json:
+            details = json.loads(details_json)
             if details and details.get("platform"):
                 platform_value = details["platform"]
                 if platform_value.isdigit():
@@ -73,7 +73,7 @@ class DolphinService(BaseService):
                         return [platform]
 
                 return [platform_value]
-        return None
+        return []
 
 
 class DolphinGame(ServiceGame):
@@ -93,10 +93,7 @@ class DolphinGame(ServiceGame):
         service_game.slug = slugify(name)
         service_game.icon = service_game.get_banner(cache_entry)
 
-        service_game.details = json.dumps({
-            "path": cache_entry["file_path"],
-            "platform": cache_entry["platform"][:-1]
-        })
+        service_game.details = json.dumps({"path": cache_entry["file_path"], "platform": cache_entry["platform"][:-1]})
         return service_game
 
     @staticmethod
@@ -107,7 +104,7 @@ class DolphinGame(ServiceGame):
 
     def get_banner(self, cache_entry):
         banner = DolphinBanner()
-        banner_path = banner.get_media_path(self.appid)
+        banner_path = banner.get_possible_media_paths(self.appid)[0]  # Dolphin only supports one media type
 
         if os.path.exists(banner_path):
             return banner_path

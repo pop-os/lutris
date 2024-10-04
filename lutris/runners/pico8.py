@@ -1,4 +1,5 @@
 """Runner for the PICO-8 fantasy console"""
+
 import json
 import math
 import os
@@ -8,6 +9,7 @@ from time import sleep
 
 from lutris import settings
 from lutris.database.games import get_game_by_field
+from lutris.exceptions import MissingGameExecutableError
 from lutris.runners.runner import Runner
 from lutris.util import system
 from lutris.util.downloader import Downloader
@@ -104,7 +106,7 @@ class pico8(Runner):
     @property
     def launch_args(self):
         if self.is_native:
-            args = [self.get_executable()]
+            args = self.get_command()
             args.append("-windowed")
             args.append("0" if self.runner_config.get("fullscreen") else "1")
             if self.runner_config.get("splore"):
@@ -120,8 +122,7 @@ class pico8(Runner):
             for arg in split_arguments(extra_args):
                 args.append(arg)
         else:
-            args = [
-                self.get_executable(),
+            args = self.get_command() + [
                 os.path.join(settings.RUNNER_DIR, "pico8/web/player.html"),
                 "--window-size",
                 self.runner_config.get("window_size"),
@@ -131,9 +132,8 @@ class pico8(Runner):
     def get_run_data(self):
         return {"command": self.launch_args, "env": self.get_env(os_env=False)}
 
-    def is_installed(self, version=None, fallback=True):
-        """Checks if pico8 runner is installed and if the pico8 executable available.
-        """
+    def is_installed(self, flatpak_allowed: bool = True) -> bool:
+        """Checks if pico8 runner is installed and if the pico8 executable available."""
         if self.is_native and system.path_exists(self.runner_config.get("runner_executable")):
             return True
         return system.path_exists(os.path.join(settings.RUNNER_DIR, "pico8/web/player.html"))
@@ -211,7 +211,7 @@ class pico8(Runner):
                 command.append("-run")
             cartPath = self.cart_path
             if not os.path.exists(cartPath):
-                return {"error": "FILE_NOT_FOUND", "file": cartPath}
+                raise MissingGameExecutableError(filename=cartPath)
             command.append(cartPath)
 
         else:

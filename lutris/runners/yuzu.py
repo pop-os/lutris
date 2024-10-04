@@ -3,6 +3,7 @@ import os
 from gettext import gettext as _
 from shutil import copyfile
 
+from lutris.exceptions import MissingGameExecutableError
 from lutris.runners.runner import Runner
 from lutris.util import system
 from lutris.util.log import logger
@@ -29,12 +30,14 @@ class yuzu(Runner):
             "label": _("Encryption keys"),
             "type": "file",
             "help": _("File containing the encryption keys."),
-        }, {
+        },
+        {
             "option": "title_keys",
             "label": _("Title keys"),
             "type": "file",
             "help": _("File containing the title keys."),
-        }, {
+        },
+        {
             "option": "fullscreen",
             "label": _("Fullscreen"),
             "type": "bool",
@@ -48,11 +51,11 @@ class yuzu(Runner):
     @property
     def yuzu_data_dir(self):
         """Return dir where Yuzu files lie."""
-        candidates = ("~/.local/share/yuzu", )
+        candidates = ("~/.local/share/yuzu",)
         for candidate in candidates:
             path = system.fix_path_case(os.path.join(os.path.expanduser(candidate), "nand"))
             if system.path_exists(path):
-                return path[:-len("nand")]
+                return path[: -len("nand")]
 
     def play(self):
         """Run the game."""
@@ -64,12 +67,12 @@ class yuzu(Runner):
 
         rom = self.game_config.get("main_file") or ""
         if not system.path_exists(rom):
-            return {"error": "FILE_NOT_FOUND", "file": rom}
+            raise MissingGameExecutableError(filename=rom)
         arguments += ["-g", rom]
         return {"command": arguments}
 
     def _update_key(self, key_type):
-        """Update a keys file if set """
+        """Update a keys file if set"""
         yuzu_data_dir = self.yuzu_data_dir
         if not yuzu_data_dir:
             logger.error("Yuzu data dir not set")

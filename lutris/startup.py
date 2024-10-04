@@ -1,4 +1,5 @@
 """Check to run at program start"""
+
 import os
 import sqlite3
 from gettext import gettext as _
@@ -15,13 +16,14 @@ from lutris.database.games import get_games
 from lutris.database.schema import syncdb
 from lutris.game import Game
 from lutris.runners.json import load_json_runners
-from lutris.scanners.lutris import build_path_cache
 from lutris.services import DEFAULT_SERVICES
-from lutris.util.display import display_gpu_info, get_gpus_info
-from lutris.util.graphics import drivers, vkquery
+from lutris.util.graphics import vkquery
+from lutris.util.graphics.drivers import get_gpu_cards
+from lutris.util.graphics.gpu import GPU, GPUS
 from lutris.util.linux import LINUX_SYSTEM
 from lutris.util.log import logger
-from lutris.util.system import create_folder, preload_vulkan_gpu_names
+from lutris.util.path_cache import build_path_cache
+from lutris.util.system import create_folder
 from lutris.util.wine.dxvk import REQUIRED_VULKAN_API_VERSION
 
 
@@ -29,53 +31,21 @@ def init_dirs():
     """Creates Lutris directories"""
     directories = [
         settings.CONFIG_DIR,
-        os.path.join(settings.CONFIG_DIR, "runners"),
-        os.path.join(settings.CONFIG_DIR, "games"),
+        settings.RUNNERS_CONFIG_DIR,
+        settings.GAME_CONFIG_DIR,
         settings.DATA_DIR,
-        os.path.join(settings.DATA_DIR, "covers"),
         settings.ICON_PATH,
-        os.path.join(settings.CACHE_DIR, "banners"),
-        os.path.join(settings.CACHE_DIR, "coverart"),
-        os.path.join(settings.DATA_DIR, "runners"),
-        os.path.join(settings.DATA_DIR, "lib"),
+        settings.BANNER_PATH,
+        settings.COVERART_PATH,
+        settings.RUNNER_DIR,
         settings.RUNTIME_DIR,
         settings.CACHE_DIR,
         settings.SHADER_CACHE_DIR,
-        os.path.join(settings.CACHE_DIR, "installer"),
-        os.path.join(settings.CACHE_DIR, "tmp"),
+        settings.INSTALLER_CACHE_DIR,
+        settings.TMP_DIR,
     ]
     for directory in directories:
         create_folder(directory)
-
-
-def get_drivers():
-    """Report on the currently running driver"""
-    driver_info = {}
-    if drivers.is_nvidia():
-        driver_info = drivers.get_nvidia_driver_info()
-        # pylint: disable=logging-format-interpolation
-        logger.info("Using {vendor} drivers {version} for {arch}".format(**driver_info["nvrm"]))
-        gpus = drivers.get_nvidia_gpu_ids()
-        for gpu_id in gpus:
-            gpu_info = drivers.get_nvidia_gpu_info(gpu_id)
-            logger.info("GPU: %s", gpu_info.get("Model"))
-    elif LINUX_SYSTEM.glxinfo:
-        # pylint: disable=no-member
-        if hasattr(LINUX_SYSTEM.glxinfo, "GLX_MESA_query_renderer"):
-            driver_info = {
-                "vendor": LINUX_SYSTEM.glxinfo.opengl_vendor,
-                "version": LINUX_SYSTEM.glxinfo.GLX_MESA_query_renderer.version,
-                "device": LINUX_SYSTEM.glxinfo.GLX_MESA_query_renderer.device
-            }
-            logger.info(
-                "Running %s Mesa driver %s on %s",
-                LINUX_SYSTEM.glxinfo.opengl_vendor,
-                LINUX_SYSTEM.glxinfo.GLX_MESA_query_renderer.version,
-                LINUX_SYSTEM.glxinfo.GLX_MESA_query_renderer.device,
-            )
-    else:
-        logger.warning("glxinfo is not available on your system, unable to detect driver version")
-    return driver_info
 
 
 def check_libs(all_components=False):
@@ -94,29 +64,33 @@ def check_libs(all_components=False):
 
 def check_vulkan():
     """Reports if Vulkan is enabled on the system"""
+    if os.environ.get("LUTRIS_NO_VKQUERY"):
+        return
     if not vkquery.is_vulkan_supported():
         logger.warning("Vulkan is not available or your system isn't Vulkan capable")
     else:
         required_api_version = REQUIRED_VULKAN_API_VERSION
         library_api_version = vkquery.get_vulkan_api_version()
         if library_api_version and library_api_version < required_api_version:
-            logger.warning("Vulkan reports an API version of %s. "
-                           "%s is required for the latest DXVK.",
-                           vkquery.format_version(library_api_version),
-                           vkquery.format_version(required_api_version))
+            logger.warning(
+                "Vulkan reports an API version of %s. " "%s is required for the latest DXVK.",
+                vkquery.format_version(library_api_version),
+                vkquery.format_version(required_api_version),
+            )
 
         devices = vkquery.get_device_info()
 
         if devices and devices[0].api_version < required_api_version:
-            logger.warning("Vulkan reports that the '%s' device has API version of %s. "
-                           "%s is required for the latest DXVK.",
-                           devices[0].name,
-                           vkquery.format_version(devices[0].api_version),
-                           vkquery.format_version(required_api_version))
+            logger.warning(
+                "Vulkan reports that the '%s' device has API version of %s. " "%s is required for the latest DXVK.",
+                devices[0].name,
+                vkquery.format_version(devices[0].api_version),
+                vkquery.format_version(required_api_version),
+            )
 
 
 def check_gnome():
-    required_names = ['svg', 'png', 'jpeg']
+    required_names = ["svg", "png", "jpeg"]
     format_names = [f.get_name() for f in GdkPixbuf.Pixbuf.get_formats()]
     for required in required_names:
         if required not in format_names:
@@ -138,22 +112,19 @@ def fill_missing_platforms():
             game.save_platform()
 
 
-def run_all_checks():
+def run_all_checks() -> None:
     """Run all startup checks"""
-    driver_info = get_drivers()
-    gpus_info = get_gpus_info()
-    for gpu_id, gpu_info in gpus_info.items():
-        display_gpu_info(gpu_id, gpu_info)
+    for card in get_gpu_cards():
+        gpu = GPU(card)
+        driver_info = gpu.get_driver_info()
+        logger.info("%s Driver %s", gpu, driver_info.get("version"))
+        GPUS[card] = gpu
+
     check_libs()
     check_vulkan()
     check_gnome()
-    preload_vulkan_gpu_names(len(gpus_info) > 1)
     fill_missing_platforms()
     build_path_cache()
-    return {
-        "drivers": driver_info,
-        "gpus": gpus_info
-    }
 
 
 def init_lutris():
@@ -164,8 +135,7 @@ def init_lutris():
         syncdb()
     except sqlite3.DatabaseError as err:
         raise RuntimeError(
-            _("Failed to open database file in %s. Try renaming this file and relaunch Lutris") %
-            settings.PGA_DB
+            _("Failed to open database file in %s. Try renaming this file and relaunch Lutris") % settings.DB_PATH
         ) from err
     for service in DEFAULT_SERVICES:
         if not settings.read_setting(service, section="services"):

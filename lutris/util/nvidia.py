@@ -25,6 +25,7 @@ class LinkMap(Structure):
         /* Plus additional fields private to the implementation */
     };
     """
+
     _fields_ = [("l_addr", c_void_p), ("l_name", c_char_p), ("l_ld", c_void_p)]
 
 
@@ -39,7 +40,6 @@ def get_nvidia_glx_path():
     try:
         libglx_nvidia = CDLL("libGLX_nvidia.so.0")
     except OSError:
-        logger.error("Unable to load libGLX_nvidia.so.0")
         return None
 
     # from dlinfo(3)
@@ -54,11 +54,7 @@ def get_nvidia_glx_path():
 
     # Run dlinfo(3) on the handle to libGLX_nvidia.so.0, storing results at the
     # address represented by glx_nvidia_info_ptr
-    if (
-        dlinfo_func(
-            libglx_nvidia._handle, RTLD_DI_LINKMAP, addressof(glx_nvidia_info_ptr)
-        ) != 0
-    ):
+    if dlinfo_func(libglx_nvidia._handle, RTLD_DI_LINKMAP, addressof(glx_nvidia_info_ptr)) != 0:
         logger.error("Unable to read Nvidia information")
         return None
 
@@ -87,7 +83,6 @@ def get_nvidia_dll_path():
     """
     libglx_path = get_nvidia_glx_path()
     if not libglx_path:
-        logger.warning("Unable to locate libGLX_nvidia")
         return
     nvidia_wine_dir = os.path.join(os.path.dirname(libglx_path), "nvidia/wine")
     if os.path.exists(os.path.join(nvidia_wine_dir, "nvngx.dll")):

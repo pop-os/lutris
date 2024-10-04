@@ -1,4 +1,5 @@
 """Process management"""
+
 import os
 import shlex
 import sys
@@ -62,7 +63,7 @@ class ProcessWatcher:
 
     def iterate_processes(self):
         for child in self.iterate_children():
-            if child.state == 'Z':
+            if child.state == "Z":
                 continue
 
             if child.name and child.name not in self.unmonitored_processes:

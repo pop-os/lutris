@@ -1,4 +1,5 @@
 """EA App service."""
+
 import json
 import os
 import random
@@ -15,8 +16,8 @@ from lutris.config import LutrisConfig, write_game_config
 from lutris.database.games import add_game, get_game_by_field
 from lutris.database.services import ServiceGameCollection
 from lutris.game import Game
-from lutris.installer import get_installers
 from lutris.services.base import OnlineService
+from lutris.services.lutris import sync_media
 from lutris.services.service_game import ServiceGame
 from lutris.services.service_media import ServiceMedia
 from lutris.util.log import logger
@@ -30,7 +31,7 @@ class EAAppGames:
 
     def __init__(self, prefix_path):
         self.prefix_path = prefix_path
-        self.ea_games_path = os.path.join(self.prefix_path, 'drive_c', self.ea_games_location)
+        self.ea_games_path = os.path.join(self.prefix_path, "drive_c", self.ea_games_location)
 
     def iter_installed_games(self):
         if not os.path.exists(self.ea_games_path):
@@ -56,8 +57,7 @@ class EAAppGames:
 
 class EAAppArtSmall(ServiceMedia):
     service = "ea_app"
-    file_pattern = "%s.jpg"
-    file_format = "jpeg"
+    file_patterns = ["%s.jpg"]
     size = (63, 89)
     dest_path = os.path.join(settings.CACHE_DIR, "ea_app/pack-art-small")
     api_field = "packArtSmall"
@@ -170,14 +170,6 @@ class EAAppService(OnlineService):
     def api_url(self):
         return "https://api%s.origin.com" % random.randint(1, 4)
 
-    def run(self):
-        db_game = get_game_by_field(self.client_installer, "slug")
-        game = Game(db_game["id"])
-        game.emit("game-launch")
-
-    def is_launchable(self):
-        return get_game_by_field(self.client_installer, "slug")
-
     def is_connected(self):
         return bool(self.access_token)
 
@@ -189,7 +181,7 @@ class EAAppService(OnlineService):
         token_data = self.get_access_token()
         if not token_data:
             raise RuntimeError("Failed to get access token")
-        with open(self.token_path, "w", encoding='utf-8') as token_file:
+        with open(self.token_path, "w", encoding="utf-8") as token_file:
             token_file.write(json.dumps(token_data, indent=2))
         self.access_token = self.load_access_token()
 
@@ -208,9 +200,9 @@ class EAAppService(OnlineService):
                 "client_id": "ORIGIN_JS_SDK",
                 "response_type": "token",
                 "redirect_uri": "nucleus:rest",
-                "prompt": "none"
+                "prompt": "none",
             },
-            cookies=self.load_cookies()
+            cookies=self.load_cookies(),
         )
         response.raise_for_status()
         token_data = response.json()
@@ -220,23 +212,21 @@ class EAAppService(OnlineService):
         response = self.session.get(
             "https://gateway.ea.com/proxy/identity/pids/me",
             cookies=self.load_cookies(),
-            headers=self.get_auth_headers()
+            headers=self.get_auth_headers(),
         )
         return response.json()
 
     def get_identity(self):
         """Request the user info"""
         identity_data = self._request_identity()
-        if identity_data.get('error') == "invalid_access_token":
+        if identity_data.get("error") == "invalid_access_token":
             logger.warning("Refreshing EA access token")
             self.fetch_access_token()
             identity_data = self._request_identity()
         elif identity_data.get("error"):
-            raise RuntimeError(
-                "%s (Error code: %s)" % (identity_data["error"], identity_data["error_number"])
-            )
+            raise RuntimeError("%s (Error code: %s)" % (identity_data["error"], identity_data["error_number"]))
 
-        if 'error' in identity_data:
+        if "error" in identity_data:
             raise RuntimeError(identity_data["error"])
         try:
             user_id = identity_data["pid"]["pidId"]
@@ -245,8 +235,7 @@ class EAAppService(OnlineService):
             raise
 
         persona_id_response = self.session.get(
-            "{}/atom/users?userIds={}".format(self.api_url, user_id),
-            headers=self.get_auth_headers()
+            "{}/atom/users?userIds={}".format(self.api_url, user_id), headers=self.get_auth_headers()
         )
         content = persona_id_response.text
         ea_account_info = ElementTree.fromstring(content)
@@ -284,10 +273,7 @@ class EAAppService(OnlineService):
 
     def get_entitlements(self, user_id):
         """Request the user's entitlements"""
-        url = "%s/ecommerce2/consolidatedentitlements/%s?machine_hash=1" % (
-            self.api_url,
-            user_id
-        )
+        url = "%s/ecommerce2/consolidatedentitlements/%s?machine_hash=1" % (self.api_url, user_id)
         headers = self.get_auth_headers()
         headers["Accept"] = "application/vnd.origin.v3+json; x-cache/force-write"
         response = self.session.get(url, headers=headers)
@@ -301,7 +287,7 @@ class EAAppService(OnlineService):
         return {
             "Authorization": "Bearer %s" % self.access_token,
             "AuthToken": self.access_token,
-            "X-AuthToken": self.access_token
+            "X-AuthToken": self.access_token,
         }
 
     def add_installed_games(self):
@@ -313,14 +299,15 @@ class EAAppService(OnlineService):
             logger.error("Invalid install of EA App at %s", ea_app_prefix)
             return
         ea_app_launcher = EAAppGames(ea_app_prefix)
-        installed_games = 0
+        installed_slugs = []
         for content_ids in ea_app_launcher.get_installed_games_content_ids():
-            self.install_from_ea_app(ea_app_game, content_ids)
-            installed_games += 1
-        logger.debug("Installed %s EA games", installed_games)
+            slug = self.install_from_ea_app(ea_app_game, content_ids)
+            if slug:
+                installed_slugs.append(slug)
+        sync_media(installed_slugs)
+        logger.debug("Installed %s EA games", len(installed_slugs))
 
     def install_from_ea_app(self, ea_game, content_ids):
-
         offer_id = content_ids[0]
         logger.debug("Installing EA game %s", offer_id)
         service_game = ServiceGameCollection.get_game("ea_app", offer_id)
@@ -334,10 +321,11 @@ class EAAppService(OnlineService):
         game_config = LutrisConfig(game_config_id=ea_game["configpath"]).game_level
         game_config["game"]["args"] = get_launch_arguments(",".join(content_ids))
         configpath = write_game_config(lutris_game_id, game_config)
-        game_id = add_game(
+        slug = self.get_installed_slug(ea_game)
+        add_game(
             name=service_game["name"],
             runner=ea_game["runner"],
-            slug=slugify(service_game["name"]),
+            slug=slug,
             directory=ea_game["directory"],
             installed=1,
             installer_slug=lutris_game_id,
@@ -345,7 +333,7 @@ class EAAppService(OnlineService):
             service=self.id,
             service_id=offer_id,
         )
-        return game_id
+        return slug
 
     def generate_installer(self, db_game, ea_db_game):
         ea_game = Game(ea_db_game["id"])
@@ -356,8 +344,8 @@ class EAAppService(OnlineService):
             "name": db_game["name"],
             "version": self.name,
             "slug": slugify(db_game["name"]) + "-" + self.id,
-            "game_slug": slugify(db_game["name"]),
-            "runner": self.runner,
+            "game_slug": self.get_installed_slug(db_game),
+            "runner": self.get_installed_runner_name(db_game),
             "appid": db_game["appid"],
             "script": {
                 "requires": self.client_installer,
@@ -365,31 +353,31 @@ class EAAppService(OnlineService):
                     "args": get_launch_arguments(db_game["appid"]),
                 },
                 "installer": [
-                    {"task": {
-                        "name": "wineexec",
-                        "executable": ea_exe,
-                        "args": get_launch_arguments(db_game["appid"]),
-                        "prefix": ea_game.config.game_config["prefix"],
-                        "description": (
-                            "EA App will now open and prompt you to install %s." % db_game["name"]
-                        )
-                    }}
-                ]
-            }
+                    {
+                        "task": {
+                            "name": "wineexec",
+                            "executable": ea_exe,
+                            "args": get_launch_arguments(db_game["appid"]),
+                            "prefix": ea_game.config.game_config["prefix"],
+                            "description": ("EA App will now open and prompt you to install %s." % db_game["name"]),
+                        }
+                    }
+                ],
+            },
         }
+
+    def get_installed_runner_name(self, db_game):
+        return self.runner
 
     def install(self, db_game):
         ea_app_game = get_game_by_field(self.client_installer, "slug")
         application = Gio.Application.get_default()
         if not ea_app_game or not ea_app_game["installed"]:
             logger.warning("Installing the EA App client")
-            installers = get_installers(game_slug=self.client_installer)
-            application.show_installer_window(installers)
+            application.show_lutris_installer_window(game_slug=self.client_installer)
         else:
             application.show_installer_window(
-                [self.generate_installer(db_game, ea_app_game)],
-                service=self,
-                appid=db_game["appid"]
+                [self.generate_installer(db_game, ea_app_game)], service=self, appid=db_game["appid"]
             )
 
 

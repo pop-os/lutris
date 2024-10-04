@@ -1,11 +1,13 @@
 """Runner for Linux games"""
+
 # Standard Library
 import os
 import stat
 from gettext import gettext as _
+from typing import Callable
 
 # Lutris Modules
-from lutris.exceptions import GameConfigError
+from lutris.exceptions import GameConfigError, MissingGameExecutableError
 from lutris.runners.runner import Runner
 from lutris.util import system
 from lutris.util.strings import split_arguments
@@ -32,12 +34,9 @@ class linux(Runner):
             "help": _("Command line arguments used when launching the game"),
         },
         {
-            "option":
-            "working_dir",
-            "type":
-            "directory_chooser",
-            "label":
-            _("Working directory"),
+            "option": "working_dir",
+            "type": "directory_chooser",
+            "label": _("Working directory"),
             "help": _(
                 "The location where the game is run from.\n"
                 "By default, Lutris uses the directory of the "
@@ -52,14 +51,10 @@ class linux(Runner):
             "help": _("A library to load before running the game's executable."),
         },
         {
-            "option":
-            "ld_library_path",
-            "type":
-            "directory_chooser",
-            "label":
-            _("Add directory to LD_LIBRARY_PATH"),
-            "advanced":
-            True,
+            "option": "ld_library_path",
+            "type": "directory_chooser",
+            "label": _("Add directory to LD_LIBRARY_PATH"),
+            "advanced": True,
             "help": _(
                 "A directory where libraries should be searched for "
                 "first, before the standard set of directories; this is "
@@ -80,6 +75,7 @@ class linux(Runner):
         exe = self.game_config.get("exe")
         if not exe:
             return None
+        exe = os.path.expanduser(exe)  # just in case!
         if os.path.isabs(exe):
             return exe
         if self.game_path:
@@ -118,9 +114,15 @@ class linux(Runner):
         """Linux programs should get individual shader caches if possible."""
         return self.game_path or self.shader_cache_dir
 
-    def is_installed(self):
+    def is_installed(self, flatpak_allowed: bool = True) -> bool:
         """Well of course Linux is installed, you're using Linux right ?"""
         return True
+
+    def can_uninstall(self):
+        return False
+
+    def uninstall(self, uninstall_callback: Callable[[], None]) -> None:
+        raise RuntimeError("Linux shouldn't be installed.")
 
     def get_launch_config_command(self, gameplay_info, launch_config):
         # The linux runner has no command (by default) beyond the 'exe' itself;
@@ -130,10 +132,11 @@ class linux(Runner):
         else:
             command = []
 
-        working_dir = launch_config.get("working_dir") or self.working_dir
+        working_dir = os.path.expanduser(launch_config.get("working_dir") or self.working_dir)
 
         if "exe" in launch_config:
-            command.append(self.get_relative_exe(launch_config["exe"], working_dir))
+            config_exe = os.path.expanduser(launch_config["exe"] or "")
+            command.append(self.get_relative_exe(config_exe, working_dir))
         elif len(command) == 0:
             raise GameConfigError(_("The runner could not find a command or exe to use for this configuration."))
 
@@ -142,20 +145,23 @@ class linux(Runner):
 
         return command
 
+    def get_command(self):
+        # There's no command for a Linux game; the game executable
+        # is the first thing in the game's command line, not any runner thing.
+        return []
+
     def play(self):
         """Run native game."""
         launch_info = {}
 
-        if not self.game_exe or not system.path_exists(self.game_exe):
-            return {"error": "FILE_NOT_FOUND", "file": self.game_exe}
+        exe = self.game_exe
+        if not exe or not system.path_exists(exe):
+            raise MissingGameExecutableError(filename=exe)
 
         # Quit if the file is not executable
-        mode = os.stat(self.game_exe).st_mode
+        mode = os.stat(exe).st_mode
         if not mode & stat.S_IXUSR:
-            return {"error": "NOT_EXECUTABLE", "file": self.game_exe}
-
-        if not system.path_exists(self.game_exe):
-            return {"error": "FILE_NOT_FOUND", "file": self.game_exe}
+            raise GameConfigError(_("The file %s is not executable") % exe)
 
         ld_preload = self.game_config.get("ld_preload")
         if ld_preload:
@@ -165,7 +171,7 @@ class linux(Runner):
         if ld_library_path:
             launch_info["ld_library_path"] = os.path.expanduser(ld_library_path)
 
-        command = [self.get_relative_exe(self.game_exe, self.working_dir)]
+        command = [self.get_relative_exe(exe, self.working_dir)]
 
         args = self.game_config.get("args") or ""
         for arg in split_arguments(args):

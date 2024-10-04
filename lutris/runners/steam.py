@@ -1,9 +1,10 @@
 """Steam for Linux runner"""
+
 import os
 from gettext import gettext as _
 
-from lutris.command import MonitoredCommand
-from lutris.exceptions import UnavailableRunnerError
+from lutris.exceptions import MissingGameExecutableError, UnavailableRunnerError
+from lutris.monitored_command import MonitoredCommand
 from lutris.runners import NonInstallableRunnerError
 from lutris.runners.runner import Runner
 from lutris.util import linux, system
@@ -57,9 +58,7 @@ class steam(Runner):
             "type": "bool",
             "default": False,
             "advanced": True,
-            "help": _(
-                "Run the game directly without Steam, requires the game binary path to be set"
-            ),
+            "help": _("Run the game directly without Steam, requires the game binary path to be set"),
         },
         {
             "option": "steamless_binary",
@@ -107,14 +106,9 @@ class steam(Runner):
         {"option": "gamemode", "default": False},
     ]
 
-    def __init__(self, config=None):
-        super().__init__(config)
-        self.own_game_remove_method = _("Remove game data (through Steam)")
-        self.no_game_remove_warning = True
-
     @property
     def runnable_alone(self):
-        return not linux.LINUX_SYSTEM.is_flatpak
+        return not linux.LINUX_SYSTEM.is_flatpak()
 
     @property
     def appid(self):
@@ -143,16 +137,18 @@ class steam(Runner):
         if appmanifests:
             return appmanifests[0]
 
-    def get_executable(self):
-        if linux.LINUX_SYSTEM.is_flatpak:
+    def get_executable(self) -> str:
+        if linux.LINUX_SYSTEM.is_flatpak():
             # Fallback to xgd-open for Steam URIs in Flatpak
-            return system.find_executable("xdg-open")
-        if self.runner_config.get("lsi_steam") and system.find_executable("lsi-steam"):
-            return system.find_executable("lsi-steam")
+            return system.find_required_executable("xdg-open")
+        if self.runner_config.get("lsi_steam"):
+            lsi_steam_path = system.find_executable("lsi-steam")
+            if lsi_steam_path:
+                return lsi_steam_path
         runner_executable = self.runner_config.get("runner_executable")
         if runner_executable and os.path.isfile(runner_executable):
             return runner_executable
-        return system.find_executable(self.runner_executable)
+        return system.find_required_executable(self.runner_executable)
 
     @property
     def working_dir(self):
@@ -187,11 +183,13 @@ class steam(Runner):
         return ""
 
     def install(self, install_ui_delegate, version=None, callback=None):
-        raise NonInstallableRunnerError(_(
-            "Steam for Linux installation is not handled by Lutris.\n"
-            "Please go to "
-            "<a href='http://steampowered.com'>http://steampowered.com</a>"
-            " or install Steam with the package provided by your distribution.")
+        raise NonInstallableRunnerError(
+            _(
+                "Steam for Linux installation is not handled by Lutris.\n"
+                "Please go to "
+                "<a href='http://steampowered.com'>http://steampowered.com</a>"
+                " or install Steam with the package provided by your distribution."
+            )
         )
 
     def install_game(self, appid, generate_acf=False):
@@ -203,7 +201,7 @@ class steam(Runner):
             if not steamapps_path:
                 raise UnavailableRunnerError(_("Could not find Steam path, is Steam installed?"))
             acf_path = os.path.join(steamapps_path, "appmanifest_%s.acf" % appid)
-            with open(acf_path, "w", encoding='utf-8') as acf_file:
+            with open(acf_path, "w", encoding="utf-8") as acf_file:
                 acf_file.write(acf_content)
         system.spawn(self.get_command() + [f"steam://install/{appid}"])
 
@@ -217,11 +215,11 @@ class steam(Runner):
         if self.game_config.get("run_without_steam") and binary_path:
             # Start without steam
             if not system.path_exists(binary_path):
-                return {"error": "FILE_NOT_FOUND", "file": binary_path}
+                raise MissingGameExecutableError(filename=binary_path)
             command = [binary_path]
         else:
             # Start through steam
-            if linux.LINUX_SYSTEM.is_flatpak:
+            if linux.LINUX_SYSTEM.is_flatpak():
                 if game_args:
                     steam_uri = "steam://run/%s//%s/" % (self.appid, game_args)
                 else:

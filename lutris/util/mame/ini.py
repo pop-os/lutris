@@ -1,10 +1,10 @@
 """Manipulate MAME ini files"""
+
 # Lutris Modules
 from lutris.util.system import path_exists
 
 
 class MameIni:
-
     """Looks like an ini file and yet it is not one!"""
 
     def __init__(self, ini_path):
@@ -26,7 +26,7 @@ class MameIni:
 
     def read(self):
         """Reads the content of the ini file"""
-        with open(self.ini_path, "r", encoding='utf-8') as ini_file:
+        with open(self.ini_path, "r", encoding="utf-8") as ini_file:
             for line in ini_file.readlines():
                 self.lines.append(line)
                 print(line)
@@ -36,7 +36,7 @@ class MameIni:
 
     def write(self):
         """Writes the file to disk"""
-        with open(self.ini_path, "w", encoding='utf-8') as ini_file:
+        with open(self.ini_path, "w", encoding="utf-8") as ini_file:
             for line in self.lines:
                 config_key, _value = self.parse(line)
                 if config_key and self.config[config_key]:

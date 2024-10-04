@@ -1,4 +1,5 @@
 """DBus backed display management for Mutter"""
+
 from collections import namedtuple
 
 import dbus
@@ -10,7 +11,6 @@ DisplayConfig = namedtuple("DisplayConfig", ("monitors", "name", "position", "tr
 
 
 class Output:
-
     """Representation of a physical display output"""
 
     def __init__(self, output_info):
@@ -89,7 +89,6 @@ class Output:
 
 
 class DisplayMode:
-
     """Representation of a screen mode (resolution, refresh rate)"""
 
     def __init__(self, mode_info):
@@ -132,8 +131,7 @@ class DisplayMode:
         return self.mode_info[5]
 
 
-class CRTC():
-
+class CRTC:
     """A CRTC (CRT controller) is a logical monitor, ie a portion of the
     compositor coordinate space. It might correspond to multiple monitors, when
     in clone mode, but not that it is possible to implement clone mode also by
@@ -203,7 +201,6 @@ class CRTC():
 
 
 class MonitorMode(DisplayMode):
-
     """Represents a mode given by a Monitor instance
     In addition to DisplayMode objects, this gives acces to the current scaling
     used and some additional properties like is_current.
@@ -246,7 +243,6 @@ class MonitorMode(DisplayMode):
 
 
 class Monitor:
-
     """A physical monitor"""
 
     def __init__(self, monitor):
@@ -294,21 +290,20 @@ class Monitor:
     @property
     def is_underscanning(self):
         """Return true if the monitor is underscanning"""
-        return bool(self._monitor[2]['is-underscanning'])
+        return bool(self._monitor[2]["is-underscanning"])
 
     @property
     def is_builtin(self):
         """Return true if the display is builtin the machine (a laptop or a tablet)"""
-        return bool(self._monitor[2]['is-builtin'])
+        return bool(self._monitor[2]["is-builtin"])
 
     @property
     def display_name(self):
         """Human readable name of the display"""
-        return str(self._monitor[2]['display-name'])
+        return str(self._monitor[2]["display-name"])
 
 
 class LogicalMonitor:
-
     """A logical monitor. Similar to CRTCs but logical monitors also contain
     scaling information.
     """
@@ -372,7 +367,6 @@ class LogicalMonitor:
 
 
 class DisplayState:
-
     """Snapshot of a display configuration at a given time"""
 
     def __init__(self, interface):
@@ -422,9 +416,9 @@ class DisplayState:
         return self.get_primary_monitor().get_current_mode()
 
 
-class MutterDisplayConfig():
-
+class MutterDisplayConfig:
     """Class to interact with the Mutter.DisplayConfig service"""
+
     namespace = "org.gnome.Mutter.DisplayConfig"
     dbus_path = "/org/gnome/Mutter/DisplayConfig"
 
@@ -603,20 +597,22 @@ class MutterDisplayConfig():
         self.current_state = DisplayState(self.interface)
         monitors_config = [
             [
-                config.position[0], config.position[1],
+                config.position[0],
+                config.position[1],
                 dbus.Double(config.scale),
-                dbus.UInt32(config.transform), config.primary,
+                dbus.UInt32(config.transform),
+                config.primary,
                 [
                     [dbus.String(str(display_name)), dbus.String(str(mode)), {}]
                     for display_name, mode in config.monitors
-                ]
-            ] for config in display_configs
+                ],
+            ]
+            for config in display_configs
         ]
         self.interface.ApplyMonitorsConfig(self.current_state.serial, self.TEMPORARY_METHOD, monitors_config, {})
 
 
 class MutterDisplayManager:
-
     """Manage displays using the DBus Mutter interface"""
 
     def __init__(self):
@@ -635,7 +631,7 @@ class MutterDisplayManager:
         resolutions = ["%sx%s" % (mode.width, mode.height) for mode in self.display_config.modes]
         if not resolutions:
             logger.error("Could not generate resolution list")
-            resolutions = ['%dx%d' % (DEFAULT_RESOLUTION_WIDTH, DEFAULT_RESOLUTION_HEIGHT)]
+            return ["%sx%s" % (DEFAULT_RESOLUTION_WIDTH, DEFAULT_RESOLUTION_HEIGHT)]
         return sorted(set(resolutions), key=lambda x: int(x.split("x")[0]), reverse=True)
 
     def get_current_resolution(self):
@@ -655,9 +651,7 @@ class MutterDisplayManager:
             if not mode:
                 logger.error("Could not find  valid mode for %s", resolution)
                 return
-            config = [
-                DisplayConfig([(monitor.name, mode.id)], monitor.name, (0, 0), 0, True, 1.0)
-            ]
+            config = [DisplayConfig([(monitor.name, mode.id)], monitor.name, (0, 0), 0, True, 1.0)]
             self.display_config.apply_monitors_config(config)
         elif resolution:
             self.display_config.apply_monitors_config(resolution)

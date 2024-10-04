@@ -4,6 +4,7 @@ from gettext import gettext as _
 
 # Lutris Modules
 from lutris import settings
+from lutris.exceptions import GameConfigError, MisconfigurationError, MissingExecutableError, MissingGameExecutableError
 from lutris.runners.runner import Runner
 from lutris.util import system
 from lutris.util.log import logger
@@ -31,12 +32,9 @@ class vice(Runner):
     ]
     game_options = [
         {
-            "option":
-            "main_file",
-            "type":
-            "file",
-            "label":
-            _("ROM file"),
+            "option": "main_file",
+            "type": "file",
+            "label": _("ROM file"),
             "help": _(
                 "The game data, commonly called a ROM image.\n"
                 "Supported formats: X64, D64, G64, P64, D67, D71, D81, "
@@ -46,12 +44,7 @@ class vice(Runner):
     ]
 
     runner_options = [
-        {
-            "option": "joy",
-            "type": "bool",
-            "label": _("Use joysticks"),
-            "default": False
-        },
+        {"option": "joy", "type": "bool", "label": _("Use joysticks"), "default": False},
         {
             "option": "fullscreen",
             "type": "bool",
@@ -104,7 +97,7 @@ class vice(Runner):
                     return self.platforms[index]
         return self.platforms[0]  # Default to C64
 
-    def get_executable(self, machine=None):
+    def get_executable(self, machine: str = None) -> str:
         if not machine:
             machine = "c64"
         executables = {
@@ -117,12 +110,14 @@ class vice(Runner):
         }
         try:
             executable = executables[machine]
+            exe = os.path.join(settings.RUNNER_DIR, "vice/bin/%s" % executable)
+            if not os.path.isfile(exe):
+                raise MissingExecutableError(_("The executable '%s' could not be found.") % exe)
+            return exe
         except KeyError as ex:
-            raise ValueError("Invalid machine '%s'" % machine) from ex
-        return os.path.join(settings.RUNNER_DIR, "vice/bin/%s" % executable)
+            raise MisconfigurationError("Invalid machine '%s'" % machine) from ex
 
     def install(self, install_ui_delegate, version=None, callback=None):
-
         def on_runner_installed(*args):
             config_path = system.create_folder("~/.vice")
             lib_dir = os.path.join(settings.RUNNER_DIR, "vice/lib/vice")
@@ -192,9 +187,9 @@ class vice(Runner):
 
         rom = self.game_config.get("main_file")
         if not rom:
-            return {"error": "CUSTOM", "text": "No rom provided"}
+            raise GameConfigError(_("No rom provided"))
         if not system.path_exists(rom):
-            return {"error": "FILE_NOT_FOUND", "file": rom}
+            raise MissingGameExecutableError(filename=rom)
 
         params = [self.get_executable(machine)]
         rom_dir = os.path.dirname(rom)

@@ -1,8 +1,10 @@
 """Base class and utilities for JSON based runners"""
+
 import json
 import os
 
 from lutris import settings
+from lutris.exceptions import MissingGameExecutableError
 from lutris.runners.runner import Runner
 from lutris.util import datapath, system
 
@@ -19,7 +21,7 @@ class JsonRunner(Runner):
         super().__init__(config)
         if not self.json_path:
             raise RuntimeError("Create subclasses of JsonRunner with the json_path attribute set")
-        with open(self.json_path, encoding='utf-8') as json_file:
+        with open(self.json_path, encoding="utf-8") as json_file:
             self._json_data = json.load(json_file)
 
         self.game_options = self._json_data["game_options"]
@@ -54,7 +56,7 @@ class JsonRunner(Runner):
                 raise RuntimeError("Unhandled type %s" % option["type"])
         main_file = self.game_config.get(self.entry_point_option)
         if not system.path_exists(main_file):
-            return {"error": "FILE_NOT_FOUND", "file": main_file}
+            raise MissingGameExecutableError(filename=main_file)
         arguments.append(main_file)
         return {"command": arguments}
 
@@ -68,10 +70,6 @@ def load_json_runners():
             if not json_path.endswith(".json"):
                 continue
             runner_name = json_path[:-5]
-            runner_class = type(
-                runner_name,
-                (JsonRunner, ),
-                {'json_path': os.path.join(json_dir, json_path)}
-            )
+            runner_class = type(runner_name, (JsonRunner,), {"json_path": os.path.join(json_dir, json_path)})
             json_runners[runner_name] = runner_class
     return json_runners

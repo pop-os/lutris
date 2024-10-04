@@ -1,4 +1,5 @@
 """Misc widgets used in the GUI."""
+
 # Standard Library
 import os
 import shlex
@@ -8,13 +9,14 @@ from gettext import gettext as _
 # Third Party Libraries
 from gi.repository import GLib, GObject, Gtk, Pango
 
+from lutris.gui.widgets.utils import open_uri
+
 # Lutris Modules
 from lutris.util import system
 from lutris.util.linux import LINUX_SYSTEM
 
 
 class SlugEntry(Gtk.Entry, Gtk.Editable):
-
     def do_insert_text(self, new_text, length, position):
         """Filter inserted characters to only accept alphanumeric and dashes"""
         new_text = "".join([c for c in new_text if c.isalnum() or c == "-"]).lower()
@@ -24,7 +26,6 @@ class SlugEntry(Gtk.Entry, Gtk.Editable):
 
 
 class NumberEntry(Gtk.Entry, Gtk.Editable):
-
     def do_insert_text(self, new_text, length, position):
         """Filter inserted characters to only accept numbers"""
         new_text = "".join([c for c in new_text if c.isnumeric()])
@@ -50,18 +51,16 @@ class FileChooserEntry(Gtk.Box):
         text=None,
         default_path=None,
         warn_if_non_empty=False,
+        warn_if_non_writable_parent=False,
         warn_if_ntfs=False,
         activates_default=False,
-        shell_quoting=False
-    ):
-        super().__init__(
-            orientation=Gtk.Orientation.VERTICAL,
-            spacing=0,
-            visible=True
-        )
+        shell_quoting=False,
+    ):  # pylint: disable=too-many-arguments
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0, visible=True)
         self.title = title
         self.action = action
         self.warn_if_non_empty = warn_if_non_empty
+        self.warn_if_non_writable_parent = warn_if_non_writable_parent
         self.warn_if_ntfs = warn_if_ntfs
         self.shell_quoting = shell_quoting
 
@@ -79,12 +78,26 @@ class FileChooserEntry(Gtk.Box):
         self.entry.connect("focus-out-event", self.on_focus_out)
         self.entry.connect("backspace", self.on_backspace)
 
-        browse_button = Gtk.Button(_("Browse..."), visible=True)
+        browse_button = Gtk.Button.new_from_icon_name("view-more-horizontal-symbolic", Gtk.IconSize.BUTTON)
+        browse_button.show()
+        if action == Gtk.FileChooserAction.SELECT_FOLDER:
+            browse_button.set_tooltip_text(_("Select a folder"))
+        else:
+            browse_button.set_tooltip_text(_("Select a file"))
+        browse_button.get_style_context().add_class("circular")
         browse_button.connect("clicked", self.on_browse_clicked)
+
+        self.open_button = Gtk.Button.new_from_icon_name("folder-symbolic", Gtk.IconSize.BUTTON)
+        self.open_button.show()
+        self.open_button.set_tooltip_text(_("Open in file browser"))
+        self.open_button.get_style_context().add_class("circular")
+        self.open_button.connect("clicked", self.on_open_clicked)
+        self.open_button.set_sensitive(bool(self.get_open_directory()))
 
         box = Gtk.Box(spacing=6, visible=True)
         box.pack_start(self.entry, True, True, 0)
-        box.add(browse_button)
+        box.pack_end(self.open_button, False, False, 0)
+        box.pack_end(browse_button, False, False, 0)
         self.pack_start(box, False, False, 0)
 
     def set_text(self, text):
@@ -175,6 +188,20 @@ class FileChooserEntry(Gtk.Box):
 
         file_chooser_dialog.destroy()
 
+    def on_open_clicked(self, _widget):
+        path = self.get_open_directory()
+
+        if path:
+            open_uri(path)
+
+    def get_open_directory(self):
+        path = self.get_path()
+
+        while path and not os.path.isdir(path):
+            path = os.path.dirname(path)
+
+        return path
+
     def on_entry_changed(self, widget):
         """Entry changed callback"""
         self.clear_warnings()
@@ -197,27 +224,30 @@ class FileChooserEntry(Gtk.Box):
             warning_image.set_from_icon_name("dialog-warning", Gtk.IconSize.DND)
             ntfs_box.add(warning_image)
             ntfs_label = Gtk.Label(visible=True)
-            ntfs_label.set_markup(_(
-                "<b>Warning!</b> The selected path is located on a drive formatted by Windows.\n"
-                "Games and programs installed on Windows drives <b>don't work</b>."
-            ))
+            ntfs_label.set_markup(
+                _(
+                    "<b>Warning!</b> The selected path is located on a drive formatted by Windows.\n"
+                    "Games and programs installed on Windows drives <b>don't work</b>."
+                )
+            )
             ntfs_box.add(ntfs_label)
             self.pack_end(ntfs_box, False, False, 10)
         if self.warn_if_non_empty and os.path.exists(path) and os.listdir(path):
             non_empty_label = Gtk.Label(visible=True)
-            non_empty_label.set_markup(_(
-                "<b>Warning!</b> The selected path "
-                "contains files. Installation will not work properly."
-            ))
+            non_empty_label.set_markup(
+                _("<b>Warning!</b> The selected path " "contains files. Installation will not work properly.")
+            )
             self.pack_end(non_empty_label, False, False, 10)
-        parent = system.get_existing_parent(path)
-        if parent is not None and not os.access(parent, os.W_OK):
-            non_writable_destination_label = Gtk.Label(visible=True)
-            non_writable_destination_label.set_markup(_(
-                "<b>Warning</b> The destination folder "
-                "is not writable by the current user."
-            ))
-            self.pack_end(non_writable_destination_label, False, False, 10)
+        if self.warn_if_non_writable_parent:
+            parent = system.get_existing_parent(path)
+            if parent is not None and not os.access(parent, os.W_OK):
+                non_writable_destination_label = Gtk.Label(visible=True)
+                non_writable_destination_label.set_markup(
+                    _("<b>Warning</b> The destination folder " "is not writable by the current user.")
+                )
+                self.pack_end(non_writable_destination_label, False, False, 10)
+
+        self.open_button.set_sensitive(bool(self.get_open_directory()))
 
         self.emit("changed")
 
@@ -246,8 +276,8 @@ class FileChooserEntry(Gtk.Box):
         original_path = self.get_path()
         path = original_path.strip("\r\n")
 
-        if path.startswith('file:///'):
-            path = urllib.parse.unquote(path[len('file://'):])
+        if path.startswith("file:///"):
+            path = urllib.parse.unquote(path[len("file://") :])
 
         path = os.path.expanduser(path)
 
@@ -292,7 +322,7 @@ class Label(Gtk.Label):
 
     def __init__(self, message=None, width_request=230):
         """Custom init of label."""
-        super().__init__(label=message)
+        super().__init__(label=message, visible=True)
         self.set_line_wrap(True)
         self.set_max_width_chars(22)
         self.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
@@ -306,16 +336,12 @@ class VBox(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, margin_top=18, **kwargs)
 
 
-class EditableGrid(Gtk.Grid):
+class EditableGrid(Gtk.Box):
     __gsignals__ = {"changed": (GObject.SIGNAL_RUN_FIRST, None, ())}
 
     def __init__(self, data, columns):
         self.columns = columns
-        super().__init__()
-        self.set_column_homogeneous(True)
-        self.set_row_homogeneous(True)
-        self.set_row_spacing(6)
-        self.set_column_spacing(6)
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6)
 
         self.liststore = Gtk.ListStore(str, str)
         for item in data:
@@ -344,14 +370,16 @@ class EditableGrid(Gtk.Grid):
         self.delete_button.connect("clicked", self.on_delete)
 
         self.scrollable_treelist = Gtk.ScrolledWindow()
-        self.scrollable_treelist.set_vexpand(True)
+        self.scrollable_treelist.set_size_request(-1, 209)
         self.scrollable_treelist.add(self.treeview)
         self.scrollable_treelist.set_shadow_type(Gtk.ShadowType.IN)
 
-        self.attach(self.scrollable_treelist, 0, 0, 5, 5)
-        self.attach(self.add_button, 5 - len(self.buttons), 6, 1, 1)
-        for i, button in enumerate(self.buttons[1:]):
-            self.attach_next_to(button, self.buttons[i], Gtk.PositionType.RIGHT, 1, 1)
+        self.pack_start(self.scrollable_treelist, True, True, 0)
+        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        for button in reversed(self.buttons):
+            button.set_size_request(80, -1)
+            button_box.pack_end(button, False, False, 0)
+        self.pack_end(button_box, False, False, 0)
         self.show_all()
 
     def on_add(self, widget):  # pylint: disable=unused-argument

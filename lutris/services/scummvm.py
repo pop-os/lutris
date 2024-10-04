@@ -19,8 +19,7 @@ class ScummvmBanner(ServiceMedia):
     service = "scummvm"
     source = "local"
     size = (96, 32)
-    file_pattern = "%s.png"
-    file_format = "jpeg"
+    file_patterns = ["%s.png"]
     dest_path = settings.CACHE_DIR
 
 
@@ -29,9 +28,7 @@ class ScummvmService(BaseService):
     icon = "scummvm"
     name = _("ScummVM")
     local = True
-    medias = {
-        "icon": ScummvmBanner
-    }
+    medias = {"icon": ScummvmBanner}
 
     def load(self):
         if not system.path_exists(SCUMMVM_CONFIG_FILE):
@@ -50,9 +47,7 @@ class ScummvmService(BaseService):
             game.appid = section
             game.runner = "scummvm"
             game.lutris_slug = game.slug
-            game.details = json.dumps({
-                "path": config[section]["path"]
-            })
+            game.details = json.dumps({"path": config[section]["path"]})
             game.save()
 
     def generate_installer(self, db_game):
@@ -61,15 +56,21 @@ class ScummvmService(BaseService):
             "name": db_game["name"],
             "version": "ScummVM",
             "slug": db_game["slug"],
-            "game_slug": slugify(db_game["lutris_slug"]),
-            "runner": "scummvm",
+            "game_slug": self.get_installed_slug(db_game),
+            "runner": self.get_installed_runner_name(db_game),
             "script": {
                 "game": {
                     "game_id": db_game["appid"],
                     "path": details["path"],
                 }
-            }
+            },
         }
+
+    def get_installed_slug(self, db_game):
+        return db_game.get("lutris_slug") or slugify(db_game["name"])
+
+    def get_installed_runner_name(self, db_game):
+        return "scummvm"
 
 
 class ScummvmGame(ServiceGame):

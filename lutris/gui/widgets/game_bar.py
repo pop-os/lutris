@@ -5,10 +5,8 @@ from gi.repository import GObject, Gtk, Pango
 
 from lutris import runners, services
 from lutris.database.games import get_game_for_service
-from lutris.exceptions import watch_errors
 from lutris.game import Game
-from lutris.game_actions import GameActions
-from lutris.gui.dialogs import ErrorDialog
+from lutris.game_actions import get_game_actions
 from lutris.gui.widgets.contextual_menu import update_action_widget_visibility
 from lutris.util.strings import gtk_safe
 
@@ -16,12 +14,15 @@ from lutris.util.strings import gtk_safe
 class GameBar(Gtk.Box):
     def __init__(self, db_game, application, window):
         """Create the game bar with a database row"""
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, visible=True,
-                         margin_top=12,
-                         margin_left=12,
-                         margin_bottom=12,
-                         margin_right=12,
-                         spacing=6)
+        super().__init__(
+            orientation=Gtk.Orientation.VERTICAL,
+            visible=True,
+            margin_top=12,
+            margin_left=12,
+            margin_bottom=12,
+            margin_right=12,
+            spacing=6,
+        )
 
         self.application = application
         self.window = window
@@ -30,7 +31,6 @@ class GameBar(Gtk.Box):
         self.game_started_hook_id = GObject.add_emission_hook(Game, "game-started", self.on_game_state_changed)
         self.game_stopped_hook_id = GObject.add_emission_hook(Game, "game-stopped", self.on_game_state_changed)
         self.game_updated_hook_id = GObject.add_emission_hook(Game, "game-updated", self.on_game_state_changed)
-        self.game_removed_hook_id = GObject.add_emission_hook(Game, "game-removed", self.on_game_state_changed)
         self.game_installed_hook_id = GObject.add_emission_hook(Game, "game-installed", self.on_game_state_changed)
         self.connect("destroy", self.on_destroy)
 
@@ -53,7 +53,7 @@ class GameBar(Gtk.Box):
             if game:
                 game_id = game["id"]
         if game_id:
-            self.game = application.get_running_game_by_id(game_id) or Game(game_id)
+            self.game = application.get_game_by_id(game_id)
         else:
             self.game = Game.create_empty_service_game(db_game, self.service)
         self.update_view()
@@ -63,18 +63,12 @@ class GameBar(Gtk.Box):
         GObject.remove_emission_hook(Game, "game-started", self.game_started_hook_id)
         GObject.remove_emission_hook(Game, "game-stopped", self.game_stopped_hook_id)
         GObject.remove_emission_hook(Game, "game-updated", self.game_updated_hook_id)
-        GObject.remove_emission_hook(Game, "game-removed", self.game_removed_hook_id)
         GObject.remove_emission_hook(Game, "game-installed", self.game_installed_hook_id)
         return True
 
-    def clear_view(self):
-        """Clears all widgets from the container"""
-        for child in self.get_children():
-            child.destroy()
-
     def update_view(self):
         """Populate the view with widgets"""
-        game_actions = GameActions(self.game, window=self.window, application=self.application)
+        game_actions = get_game_actions([self.game], window=self.window, application=self.application)
 
         game_label = self.get_game_name_label()
         game_label.set_halign(Gtk.Align.START)
@@ -86,9 +80,8 @@ class GameBar(Gtk.Box):
         self.play_button = self.get_play_button(game_actions)
         hbox.pack_start(self.play_button, False, False, 0)
 
-        if self.game.is_installed:
-            hbox.pack_start(self.get_runner_button(), False, False, 0)
-            hbox.pack_start(self.get_platform_label(), False, False, 0)
+        hbox.pack_start(self.get_runner_button(), False, False, 0)
+        hbox.pack_start(self.get_platform_label(), False, False, 0)
         if self.game.lastplayed:
             hbox.pack_start(self.get_last_played_label(), False, False, 0)
         if self.game.playtime:
@@ -157,6 +150,8 @@ class GameBar(Gtk.Box):
         return title_label
 
     def get_runner_button(self):
+        if not self.game.has_runner:
+            return Gtk.Box()
         icon_name = self.game.runner.name + "-symbolic"
         runner_icon = Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.MENU)
         runner_popover_buttons = self.get_runner_buttons()
@@ -170,6 +165,8 @@ class GameBar(Gtk.Box):
 
     def get_platform_label(self):
         platform_label = Gtk.Label(visible=True)
+        if not self.game.platform:
+            return platform_label
         platform_label.set_size_request(120, -1)
         platform_label.set_alignment(0, 0.5)
         platform = gtk_safe(self.game.platform)
@@ -198,7 +195,7 @@ class GameBar(Gtk.Box):
     def get_locate_installed_game_button(self, game_actions):
         """Return a button to locate an existing install"""
         button = self.get_link_button(_("Locate installed game"))
-        button.connect("clicked", game_actions.on_locate_installed_game, self.game)
+        button.connect("clicked", game_actions.on_locate_installed_game)
         return button
 
     def get_play_button(self, game_actions):
@@ -212,15 +209,18 @@ class GameBar(Gtk.Box):
             if self.game.state == self.game.STATE_STOPPED:
                 button.set_label(_("Play"))
                 button.connect("clicked", game_actions.on_game_launch)
+                button.set_sensitive(game_actions.is_game_launchable)
             elif self.game.state == self.game.STATE_LAUNCHING:
                 button.set_label(_("Launching"))
                 button.set_sensitive(False)
             else:
                 button.set_label(_("Stop"))
                 button.connect("clicked", game_actions.on_game_stop)
+                button.set_sensitive(game_actions.is_game_running)
         else:
             button.set_label(_("Install"))
             button.connect("clicked", game_actions.on_install_clicked)
+            button.set_sensitive(game_actions.is_installable)
             if self.service:
                 if self.service.local:
                     # Local services don't show an install dialog, they can be launched directly
@@ -252,38 +252,31 @@ class GameBar(Gtk.Box):
 
     def get_runner_buttons(self):
         buttons = []
-        if self.game.runner_name and self.game.is_installed:
+        if self.game.has_runner and self.game.is_installed:
             runner = runners.import_runner(self.game.runner_name)(self.game.config)
             for _name, label, callback in runner.context_menu_entries:
                 button = self.get_link_button(label, callback)
                 buttons.append(button)
         return buttons
 
-    @watch_errors()
     def on_link_button_clicked(self, button, callback):
         """Callback for link buttons. Closes the popover then runs the actual action"""
         popover = button.get_parent().get_parent()
         popover.popdown()
         callback(button)
 
-    @watch_errors()
     def on_install_clicked(self, button):
         """Handler for installing service games"""
         self.service.install(self.db_game)
 
-    @watch_errors()
     def on_game_state_changed(self, game):
         """Handler called when the game has changed state"""
-        if (
-            (self.game.is_db_stored and game.id == self.game.id)
-            or (self.appid and game.appid == self.appid)
-        ):
+        if (self.game.is_db_stored and game.id == self.game.id) or (self.appid and game.appid == self.appid):
             self.game = game
         elif self.game != game:
             return True
-        self.clear_view()
+
+        for child in self.get_children():
+            child.destroy()
         self.update_view()
         return True
-
-    def on_watched_error(self, error):
-        ErrorDialog(error, parent=self.get_toplevel())

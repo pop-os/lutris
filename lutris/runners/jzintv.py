@@ -2,6 +2,8 @@
 import os
 from gettext import gettext as _
 
+from lutris.exceptions import MissingBiosError, MissingGameExecutableError
+
 # Lutris Modules
 from lutris.runners.runner import Runner
 from lutris.util import system
@@ -37,12 +39,7 @@ class jzintv(Runner):
                 "necessary to the emulation."
             ),
         },
-        {
-            "option": "fullscreen",
-            "type": "bool",
-            "section": _("Graphics"),
-            "label": _("Fullscreen")
-        },
+        {"option": "fullscreen", "type": "bool", "section": _("Graphics"), "label": _("Fullscreen")},
         {
             "option": "resolution",
             "type": "choice",
@@ -57,13 +54,13 @@ class jzintv(Runner):
                 ("1680 x 1050", "4"),
                 ("1600 x 1200", "6"),
             ),
-            "default": "0"
+            "default": "0",
         },
     ]
 
     def play(self):
         """Run Intellivision game"""
-        arguments = [self.get_executable()]
+        arguments = self.get_command()
 
         selected_resolution = self.runner_config.get("resolution")
         if selected_resolution:
@@ -77,10 +74,10 @@ class jzintv(Runner):
             arguments.append("--execimg=%s/exec.bin" % bios_path)
             arguments.append("--gromimg=%s/grom.bin" % bios_path)
         else:
-            return {"error": "NO_BIOS"}
+            raise MissingBiosError()
         rom_path = self.game_config.get("main_file") or ""
         if not system.path_exists(rom_path):
-            return {"error": "FILE_NOT_FOUND", "file": rom_path}
+            raise MissingGameExecutableError(filename=rom_path)
         romdir = os.path.dirname(rom_path)
         romfile = os.path.basename(rom_path)
         arguments += ["--rom-path=%s/" % romdir]

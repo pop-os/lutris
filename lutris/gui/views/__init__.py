@@ -1,10 +1,11 @@
 """Common values used for views"""
+
 (
     COL_ID,
     COL_SLUG,
     COL_NAME,
     COL_SORTNAME,
-    COL_MEDIA_PATH,
+    COL_MEDIA_PATHS,
     COL_YEAR,
     COL_RUNNER,
     COL_RUNNER_HUMAN_NAME,

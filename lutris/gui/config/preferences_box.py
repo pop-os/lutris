@@ -1,9 +1,9 @@
 from gettext import gettext as _
 
-from gi.repository import Gio, Gtk
+from gi.repository import Gtk
 
-from lutris import settings
 from lutris.gui.config.base_config_box import BaseConfigBox
+from lutris.gui.widgets.status_icon import supports_status_icon
 
 
 class InterfacePreferencesBox(BaseConfigBox):
@@ -16,9 +16,9 @@ class InterfacePreferencesBox(BaseConfigBox):
         "discord_rpc": _("Enable Discord Rich Presence for Available Games"),
     }
 
-    settings_accelerators = {
-        "hide_badges_on_icons": "<Primary>p"
-    }
+    settings_accelerators = {"hide_badges_on_icons": "<Primary>p"}
+
+    settings_availability = {"show_tray_icon": supports_status_icon}
 
     def __init__(self, accelerators):
         super().__init__()
@@ -27,25 +27,13 @@ class InterfacePreferencesBox(BaseConfigBox):
         frame = Gtk.Frame(visible=True, shadow_type=Gtk.ShadowType.ETCHED_IN)
         listbox = Gtk.ListBox(visible=True)
         frame.add(listbox)
-        self.pack_start(frame, False, False, 12)
+        self.pack_start(frame, False, False, 0)
         for setting_key, label in self.settings_options.items():
-            list_box_row = Gtk.ListBoxRow(visible=True)
-            list_box_row.set_selectable(False)
-            list_box_row.set_activatable(False)
-            list_box_row.add(self.get_setting_box(setting_key, label))
-            listbox.add(list_box_row)
+            available = setting_key not in self.settings_availability or self.settings_availability[setting_key]()
 
-    def _on_setting_change(self, widget, state, setting_key):
-        """Save a setting when an option is toggled"""
-        settings.write_setting(setting_key, state)
-        application = Gio.Application.get_default()
-
-        # That should be implemented in the
-        # application's event handler for settings-changed.
-        if setting_key == "dark_theme":
-            application.style_manager.is_config_dark = state
-        elif setting_key == "show_tray_icon":
-            if application.window.get_visible():
-                application.set_tray_icon()
-
-        self.get_toplevel().emit("settings-changed", setting_key)
+            if available:
+                list_box_row = Gtk.ListBoxRow(visible=True)
+                list_box_row.set_selectable(False)
+                list_box_row.set_activatable(False)
+                list_box_row.add(self.get_setting_box(setting_key, label))
+                listbox.add(list_box_row)

@@ -2,6 +2,8 @@
 import os
 from gettext import gettext as _
 
+from lutris.exceptions import MissingGameExecutableError
+
 # Lutris Modules
 from lutris.runners.runner import Runner
 from lutris.util import system
@@ -84,8 +86,7 @@ class o2em(Runner):
             "section": _("Graphics"),
             "label": _("Scanlines display style"),
             "default": False,
-            "help": _("Activates a display filter adding scanlines to imitate "
-                      "the displays of yesteryear."),
+            "help": _("Activates a display filter adding scanlines to imitate " "the displays of yesteryear."),
         },
     ]
 
@@ -98,7 +99,6 @@ class o2em(Runner):
         return ""
 
     def install(self, install_ui_delegate, version=None, callback=None):
-
         def on_runner_installed(*args):
             if not system.path_exists(self.bios_path):
                 os.makedirs(self.bios_path)
@@ -122,9 +122,9 @@ class o2em(Runner):
             arguments.append("-s2=%s" % self.runner_config["controller2"])
         rom_path = self.game_config.get("main_file") or ""
         if not system.path_exists(rom_path):
-            return {"error": "FILE_NOT_FOUND", "file": rom_path}
+            raise MissingGameExecutableError(filename=rom_path)
         romdir = os.path.dirname(rom_path)
         romfile = os.path.basename(rom_path)
         arguments.append("-romdir=%s/" % romdir)
         arguments.append(romfile)
-        return {"command": [self.get_executable()] + arguments}
+        return {"command": self.get_command() + arguments}

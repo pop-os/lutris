@@ -1,8 +1,8 @@
 """Game representation for views"""
+
 import time
 
 from lutris.database import games
-from lutris.database.games import get_service_games
 from lutris.runners import get_runner_human_name
 from lutris.services import SERVICES
 from lutris.util.log import logger
@@ -19,6 +19,7 @@ class StoreItem:
             raise RuntimeError("No game data provided")
         self._game_data = game_data
         self._cached_installed_game_data = None
+        self._cached_installed_game_data_loaded = False
         self.service_media = service_media
 
     def __str__(self):
@@ -32,37 +33,47 @@ class StoreItem:
         """Provides- and caches- the DB data for the installed game corresponding to this one,
         if it's a service game. We can get away with caching this because StoreItem instances are
         very short-lived, so the game won't be changed underneath us."""
-        appid = self._game_data.get("appid")
-        if appid:
-            if self._cached_installed_game_data is None:
-                self._cached_installed_game_data = games.get_game_for_service(self.service,
-                                                                              self._game_data["appid"]) or {}
-            return self._cached_installed_game_data
+        if not self._cached_installed_game_data_loaded:
+            appid = self._game_data.get("appid")
+            service_id = self._game_data.get("service")
+            if appid and service_id:
+                self._cached_installed_game_data = games.get_game_for_service(service_id, appid) or {}
+                self._cached_installed_game_data_loaded = True
+
+        return self._cached_installed_game_data
+
+    def apply_installed_game_data(self, installed_game_data):
+        self._cached_installed_game_data_loaded = True
+        self._cached_installed_game_data = installed_game_data
+
+    def _get_game_attribute(self, key):
+        if key in self._game_data:
+            return self._game_data[key]
+
+        installed_game_data = self._installed_game_data
+
+        if installed_game_data:
+            return installed_game_data.get(key)
 
         return None
 
-    def _get_game_attribute(self, key):
-        value = self._game_data.get(key)
-
-        if not value:
-            game_data = self._installed_game_data
-
-            if game_data:
-                value = game_data.get(key)
-
-        return value
-
     @property
-    def id(self):  # pylint: disable=invalid-name
+    def id(self) -> str:  # pylint: disable=invalid-name
         """Game internal ID"""
         # Return a unique identifier for the game.
         # Since service games are not related to lutris, use the appid
         if "service_id" not in self._game_data:
             if "appid" in self._game_data:
-                return self._game_data["appid"]
-            return self._game_data["slug"]
+                _id = self._game_data["appid"]
+            else:
+                _id = self._game_data["slug"]
+        else:
+            _id = self._game_data["id"]
 
-        return self._game_data["id"]
+        if not _id:
+            logger.error("No id could be found for '%s'", self.name)
+
+        return str(_id)
 
     @property
     def service(self):
@@ -113,20 +124,23 @@ class StoreItem:
         return gtk_safe(_platform)
 
     @property
-    def installed(self):
+    def installed(self) -> bool:
         """Game is installed"""
-        if "service_id" not in self._game_data:
-            return self.id in get_service_games(self.service)
-        if not self._game_data.get("runner"):
-            return False
-        return self._game_data.get("installed")
 
-    def get_media_path(self):
+        def check_data(data):
+            return bool(data and data.get("installed") and data.get("runner"))
+
+        if "installed" in self._game_data:
+            return check_data(self._game_data)
+
+        return check_data(self._installed_game_data)
+
+    def get_media_paths(self):
         """Returns the path to the image file for this item"""
         if self._game_data.get("icon"):
-            return self._game_data["icon"]
+            return [self._game_data["icon"]]
 
-        return self.service_media.get_media_path(self.slug)
+        return self.service_media.get_possible_media_paths(self.slug)
 
     @property
     def installed_at(self):
@@ -136,10 +150,7 @@ class StoreItem:
     @property
     def installed_at_text(self):
         """Date of install (textual representation)"""
-        return gtk_safe(
-            time.strftime("%X %x", time.localtime(self.installed_at)) if
-            self.installed_at else ""
-        )
+        return gtk_safe(time.strftime("%X %x", time.localtime(self.installed_at)) if self.installed_at else "")
 
     @property
     def lastplayed(self):
@@ -149,12 +160,7 @@ class StoreItem:
     @property
     def lastplayed_text(self):
         """Date of last play (textual representation)"""
-        return gtk_safe(
-            time.strftime(
-                "%X %x",
-                time.localtime(self.lastplayed)
-            ) if self.lastplayed else ""
-        )
+        return gtk_safe(time.strftime("%X %x", time.localtime(self.lastplayed)) if self.lastplayed else "")
 
     @property
     def playtime(self):

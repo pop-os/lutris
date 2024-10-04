@@ -9,13 +9,12 @@ from lutris.util.strings import gtk_safe, human_size
 
 
 class DownloadProgressBox(Gtk.Box):
-
     """Progress bar used to monitor a file download."""
 
     __gsignals__ = {
-        "complete": (GObject.SignalFlags.RUN_LAST, None, (GObject.TYPE_PYOBJECT, )),
+        "complete": (GObject.SignalFlags.RUN_LAST, None, (GObject.TYPE_PYOBJECT,)),
         "cancel": (GObject.SignalFlags.RUN_LAST, None, ()),
-        "error": (GObject.SignalFlags.RUN_LAST, None, (GObject.TYPE_PYOBJECT, )),
+        "error": (GObject.SignalFlags.RUN_LAST, None, (GObject.TYPE_PYOBJECT,)),
     }
 
     def __init__(self, params, cancelable=True, downloader=None):
@@ -72,7 +71,7 @@ class DownloadProgressBox(Gtk.Box):
             except RuntimeError as ex:
                 from lutris.gui.dialogs import ErrorDialog
 
-                ErrorDialog(ex.args[0])
+                ErrorDialog(ex, parent=self.get_toplevel())
                 self.emit("cancel")
                 return None
 
@@ -119,9 +118,7 @@ class DownloadProgressBox(Gtk.Box):
             return False
         self.progressbar.set_fraction(progress)
         megabytes = 1024 * 1024
-        progress_text = _(
-            "{downloaded} / {size} ({speed:0.2f}MB/s), {time} remaining"
-        ).format(
+        progress_text = _("{downloaded} / {size} ({speed:0.2f}MB/s), {time} remaining").format(
             downloaded=human_size(self.downloader.downloaded_size),
             size=human_size(self.downloader.full_size),
             speed=float(self.downloader.average_speed) / megabytes,

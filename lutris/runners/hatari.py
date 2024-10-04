@@ -5,6 +5,7 @@ from gettext import gettext as _
 
 # Lutris Modules
 from lutris.config import LutrisConfig
+from lutris.exceptions import MissingBiosError, MissingGameExecutableError
 from lutris.runners.runner import Runner
 from lutris.util import system
 
@@ -118,14 +119,14 @@ class hatari(Runner):
     ]
 
     def install(self, install_ui_delegate, version=None, callback=None):
-
         def on_runner_installed(*args):
             bios_path = system.create_folder("~/.hatari/bios")
 
             bios_filename = install_ui_delegate.show_install_file_inquiry(
                 question=_("Do you want to select an Atari ST BIOS file?"),
                 title=_("Use BIOS file?"),
-                message=_("Select a BIOS file"))
+                message=_("Select a BIOS file"),
+            )
 
             if bios_filename:
                 shutil.copy(bios_filename, bios_path)
@@ -175,10 +176,10 @@ class hatari(Runner):
             params.append("--tos")
             params.append(self.runner_config["bios_file"])
         else:
-            return {"error": "NO_BIOS"}
+            raise MissingBiosError()
         diska = self.game_config.get("disk-a")
         if not system.path_exists(diska):
-            return {"error": "FILE_NOT_FOUND", "file": diska}
+            raise MissingGameExecutableError(filename=diska)
         params.append("--disk-a")
         params.append(diska)
 

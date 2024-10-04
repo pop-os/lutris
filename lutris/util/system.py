@@ -1,5 +1,5 @@
 """System utilities"""
-import glob
+
 import hashlib
 import os
 import re
@@ -9,16 +9,16 @@ import stat
 import string
 import subprocess
 import zipfile
-from collections import defaultdict
-from functools import lru_cache
 from gettext import gettext as _
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 from gi.repository import Gio, GLib
 
 from lutris import settings
-from lutris.util.jobs import AsyncCall
+from lutris.exceptions import MissingExecutableError
 from lutris.util.log import logger
+from lutris.util.portals import TrashPortal
 
 # Home folders that should never get deleted.
 PROTECTED_HOME_FOLDERS = (
@@ -29,52 +29,87 @@ PROTECTED_HOME_FOLDERS = (
     _("Videos"),
     _("Pictures"),
     _("Projects"),
-    _("Games")
+    _("Games"),
 )
 
-# vulkan dirs used by distros or containers that aren't from:
-# https://github.com/KhronosGroup/Vulkan-Loader/blob/v1.3.235/docs/LoaderDriverInterface.md#driver-discovery-on-linux
-# don't include the /vulkan suffix
-FALLBACK_VULKAN_DATA_DIRS = [
-    "/usr/local/etc",  # standard site-local location
-    "/usr/local/share",  # standard site-local location
-    "/etc",  # standard location
-    "/usr/share",  # standard location
-    "/usr/lib/x86_64-linux-gnu/GL",  # Flatpak GL extension
-    "/usr/lib/i386-linux-gnu/GL",  # Flatpak GL32 extension
-    "/opt/amdgpu-pro/etc"  # AMD GPU Pro - TkG
-]
+
+def get_environment():
+    """Return a safe to use copy of the system's environment.
+    Values starting with BASH_FUNC can cause issues when written in a text file."""
+    return {key: value for key, value in os.environ.items() if not key.startswith("BASH_FUNC")}
 
 
-def execute(command, env=None, cwd=None, capture_stderr=False, quiet=False, shell=False, timeout=None):
+def execute(
+    command: List[str],
+    env: Dict[str, str] = None,
+    cwd: str = None,
+    quiet: bool = False,
+    shell: bool = False,
+    timeout: float = None,
+) -> str:
     """
-        Execute a system command and return its results.
+    Execute a system command and return its standard output; standard error is discarded.
 
-        Params:
-            command (list): A list containing an executable and its parameters
-            env (dict): Dict of values to add to the current environment
-            cwd (str): Working directory
-            capture_stderr (bool): Append stderr to stdout (might cause slowdowns)
-            quiet (bool): Do not display log messages
-            timeout (int): Number of seconds the program is allowed to run, disabled by default
+    Params:
+        command (list): A list containing an executable and its parameters
+        env (dict): Dict of values to add to the current environment
+        cwd (str): Working directory
+        quiet (bool): Do not display log messages
+        timeout (int): Number of seconds the program is allowed to run, disabled by default
 
-        Returns:
-            str: stdout output
+    Returns:
+        str: stdout output
     """
+    stdout, _stderr = _execute(command, env=env, cwd=cwd, quiet=quiet, shell=shell, timeout=timeout)
+    return stdout
 
+
+def execute_with_error(
+    command: List[str],
+    env: Dict[str, str] = None,
+    cwd: str = None,
+    quiet: bool = False,
+    shell: bool = False,
+    timeout: float = None,
+) -> Tuple[str, str]:
+    """
+    Execute a system command and return its standard output and; standard error in a tuple.
+
+    Params:
+        command (list): A list containing an executable and its parameters
+        env (dict): Dict of values to add to the current environment
+        cwd (str): Working directory
+        quiet (bool): Do not display log messages
+        timeout (int): Number of seconds the program is allowed to run, disabled by default
+
+    Returns:
+        str, str: stdout output and stderr output
+    """
+    return _execute(command, env=env, cwd=cwd, capture_stderr=True, quiet=quiet, shell=shell, timeout=timeout)
+
+
+def _execute(
+    command: List[str],
+    env: Dict[str, str] = None,
+    cwd: str = None,
+    capture_stderr: bool = False,
+    quiet: bool = False,
+    shell: bool = False,
+    timeout: float = None,
+) -> Tuple[str, str]:
     # Check if the executable exists
     if not command:
         logger.error("No executable provided!")
-        return ""
+        return "", ""
     if os.path.isabs(command[0]) and not path_exists(command[0]):
         logger.error("No executable found in %s", command)
-        return ""
+        return "", ""
 
     if not quiet:
         logger.debug("Executing %s", " ".join([str(i) for i in command]))
 
     # Set up environment
-    existing_env = os.environ.copy()
+    existing_env = get_environment()
     if env:
         if not quiet:
             logger.debug(" ".join("{}={}".format(k, v) for k, v in env.items()))
@@ -91,32 +126,29 @@ def execute(command, env=None, cwd=None, capture_stderr=False, quiet=False, shel
             stderr=subprocess.PIPE if capture_stderr else subprocess.DEVNULL,
             env=existing_env,
             cwd=cwd,
-            errors="replace"
+            errors="replace",
         ) as command_process:
             stdout, stderr = command_process.communicate(timeout=timeout)
     except (OSError, TypeError) as ex:
         logger.error("Could not run command %s (env: %s): %s", command, env, ex)
-        return ""
+        return "", ""
     except subprocess.TimeoutExpired:
         logger.error("Command %s after %s seconds", command, timeout)
-        return ""
+        return "", ""
 
-    if stderr:
-        return (stdout + stderr).strip()
-
-    return stdout.strip()
+    return stdout.strip(), (stderr or "").strip()
 
 
 def spawn(command, env=None, cwd=None, quiet=False, shell=False):
     """
-        Execute a system command but discard its results and do not wait
-        for it to complete.
+    Execute a system command but discard its results and do not wait
+    for it to complete.
 
-        Params:
-            command (list): A list containing an executable and its parameters
-            env (dict): Dict of values to add to the current environment
-            cwd (str): Working directory
-            quiet (bool): Do not display log messages
+    Params:
+        command (list): A list containing an executable and its parameters
+        env (dict): Dict of values to add to the current environment
+        cwd (str): Working directory
+        quiet (bool): Do not display log messages
     """
 
     # Check if the executable exists
@@ -131,7 +163,7 @@ def spawn(command, env=None, cwd=None, quiet=False, shell=False):
         logger.debug("Spawning %s", " ".join([str(i) for i in command]))
 
     # Set up environment
-    existing_env = os.environ.copy()
+    existing_env = get_environment()
     if env:
         if not quiet:
             logger.debug(" ".join("{}={}".format(k, v) for k, v in env.items()))
@@ -142,26 +174,16 @@ def spawn(command, env=None, cwd=None, quiet=False, shell=False):
     # (especially when using regedit with wine)
     try:
         subprocess.Popen(  # pylint: disable=consider-using-with
-            command,
-            shell=shell,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            env=existing_env,
-            cwd=cwd
+            command, shell=shell, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=existing_env, cwd=cwd
         )
     except (OSError, TypeError) as ex:
         logger.error("Could not run command %s (env: %s): %s", command, env, ex)
 
 
-def read_process_output(command, timeout=5):
+def read_process_output(command, timeout=5, env=None):
     """Return the output of a command as a string"""
     try:
-        return subprocess.check_output(
-            command,
-            timeout=timeout,
-            encoding="utf-8",
-            errors="ignore"
-        ).strip()
+        return subprocess.check_output(command, timeout=timeout, env=env, encoding="utf-8", errors="ignore").strip()
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as ex:
         logger.error("%s command failed: %s", command, ex)
         return ""
@@ -169,7 +191,7 @@ def read_process_output(command, timeout=5):
 
 def get_md5_in_zip(filename):
     """Return the md5 hash of a file in a zip"""
-    with zipfile.ZipFile(filename, 'r') as archive:
+    with zipfile.ZipFile(filename, "r") as archive:
         files = archive.namelist()
         if len(files) > 1:
             logger.warning("More than 1 file in archive %s, reading 1st one: %s", filename, files[0])
@@ -215,11 +237,26 @@ def make_executable(exec_path):
     os.chmod(exec_path, file_stats.st_mode | stat.S_IEXEC)
 
 
-def find_executable(exec_name):
-    """Return the absolute path of an executable"""
-    if not exec_name:
-        return None
-    return shutil.which(exec_name)
+def can_find_executable(exec_name: str) -> bool:
+    """Checks if an executable can be located; if false,
+    find_executable will return None, and find_required_executable
+    will raise an exception."""
+    return bool(find_executable(exec_name))
+
+
+def find_executable(exec_name: str) -> Optional[str]:
+    """Return the absolute path of an executable, or None if
+    it could not be found."""
+    return shutil.which(exec_name) if exec_name else None
+
+
+def find_required_executable(exec_name: str) -> str:
+    """Return the absolute path of an executable, but raises a
+    MissingExecutableError if it could not be found."""
+    exe = find_executable(exec_name)
+    if not exe:
+        raise MissingExecutableError(_("The executable '%s' could not be found.") % exec_name)
+    return exe
 
 
 def get_pid(program, multiple=False):
@@ -296,8 +333,8 @@ def merge_folders(source, destination):
     # We do not use shutil.copytree() here because that would copy
     # the file permissions, and we do not want them.
     source = os.path.abspath(source)
-    for (dirpath, dirnames, filenames) in os.walk(source):
-        source_relpath = dirpath[len(source):].strip("/")
+    for dirpath, dirnames, filenames in os.walk(source):
+        source_relpath = dirpath[len(source) :].strip("/")
         dst_abspath = os.path.join(destination, source_relpath)
         for dirname in dirnames:
             new_dir = os.path.join(dst_abspath, dirname)
@@ -313,20 +350,45 @@ def merge_folders(source, destination):
             shutil.copy(os.path.join(dirpath, filename), os.path.join(dst_abspath, filename), follow_symlinks=False)
 
 
-def remove_folder(path):
-    """Delete a folder specified by path
-    Returns true if the folder was successfully removed.
+def remove_folder(
+    path: str,
+    completion_function: TrashPortal.CompletionFunction = None,
+    error_function: TrashPortal.ErrorFunction = None,
+) -> None:
+    """Trashes a folder specified by path, asynchronously. The folder
+    likely exists after this returns, since it's using DBus to ask
+    for the entrashification.
+    """
+    if not os.path.exists(path):
+        logger.warning("Non existent path: %s", path)
+        if completion_function:
+            completion_function()
+        return
+    if os.path.samefile(os.path.expanduser("~"), path):
+        if error_function:
+            error_function(RuntimeError("Lutris tried to trash home directory!"))
+        return
+
+    logger.debug("Trashing folder %s", path)
+    TrashPortal([path], completion_function=completion_function, error_function=error_function)
+
+
+def delete_folder(path):
+    """Delete a folder specified by path immediately. The folder will not
+    be recoverable, so consider remove_folder() instead.
+
+    Returns true if the folder was successfully deleted.
     """
     if not os.path.exists(path):
         logger.warning("Non existent path: %s", path)
         return False
-    logger.debug("Removing folder %s", path)
     if os.path.samefile(os.path.expanduser("~"), path):
         raise RuntimeError("Lutris tried to erase home directory!")
+    logger.debug("Deleting folder %s", path)
     try:
         shutil.rmtree(path)
     except OSError as ex:
-        logger.error("Failed to remove folder %s: %s (Error code %s)", path, ex.strerror, ex.errno)
+        logger.error("Failed to delete folder %s: %s (Error code %s)", path, ex.strerror, ex.errno)
         return False
     return True
 
@@ -377,10 +439,10 @@ def is_removeable(path, system_config):
 
 
 def fix_path_case(path):
-    """Do a case insensitive check, return the real path with correct case. If the path is
+    """Do a case-insensitive check, return the real path with correct case. If the path is
     not for a real file, this corrects as many components as do exist."""
     if not path or os.path.exists(path) or not path.startswith("/"):
-        # If a path isn't provided or it exists as is, return it.
+        # If a path isn't provided, or it exists as is, or is a relative path, just return it.
         return path
     parts = path.strip("/").split("/")
     current_path = "/"
@@ -410,10 +472,11 @@ def get_pids_using_file(path):
     if not os.path.exists(path):
         logger.error("Can't return PIDs using non existing file: %s", path)
         return set()
+
     fuser_path = find_executable("fuser")
     if not fuser_path:
         logger.warning("fuser not available, please install psmisc")
-        return set([])
+        return set()
     fuser_output = execute([fuser_path, path], quiet=True)
     return set(fuser_output.split())
 
@@ -424,7 +487,7 @@ def reverse_expanduser(path):
         return path
     user_path = os.path.expanduser("~")
     if path.startswith(user_path):
-        path = path[len(user_path):].strip("/")
+        path = path[len(user_path) :].strip("/")
         return "~/" + path
     return path
 
@@ -447,7 +510,7 @@ def path_contains(parent, child, resolve_symlinks=False):
     return resolved_child == resolved_parent or resolved_parent in resolved_child.parents
 
 
-def path_exists(path, check_symlinks=False, exclude_empty=False):
+def path_exists(path: str, check_symlinks: bool = False, exclude_empty: bool = False) -> bool:
     """Wrapper around system.path_exists that doesn't crash with empty values
 
     Params:
@@ -467,6 +530,19 @@ def path_exists(path, check_symlinks=False, exclude_empty=False):
         logger.warning("%s is a broken link", path)
         return not check_symlinks
     return False
+
+
+def create_symlink(source: str, destination: str):
+    """Create a symlink from source to destination.
+    If there is already a symlink at the destination and it is broken, it will be deleted."""
+    is_directory = os.path.isdir(source)
+    if os.path.islink(destination) and not os.path.exists(destination):
+        logger.warning("Deleting broken symlink %s", destination)
+        os.remove(destination)
+    try:
+        os.symlink(source, destination, target_is_directory=is_directory)
+    except OSError:
+        logger.error("Failed linking %s to %s", source, destination)
 
 
 def reset_library_preloads():
@@ -494,7 +570,7 @@ def update_desktop_icons():
     """Update Icon for GTK+ desktop manager
     Other desktop manager icon cache commands must be added here if needed
     """
-    if find_executable("gtk-update-icon-cache"):
+    if can_find_executable("gtk-update-icon-cache"):
         execute(["gtk-update-icon-cache", "-tf", os.path.join(GLib.get_user_data_dir(), "icons/hicolor")], quiet=True)
         execute(["gtk-update-icon-cache", "-tf", os.path.join(settings.RUNTIME_DIR, "icons/hicolor")], quiet=True)
 
@@ -504,9 +580,7 @@ def get_disk_size(path):
     total_size = 0
     for base, _dirs, files in os.walk(path):
         total_size += sum(
-            os.stat(os.path.join(base, f)).st_size
-            for f in files
-            if os.path.isfile(os.path.join(base, f))
+            os.stat(os.path.join(base, f)).st_size for f in files if os.path.isfile(os.path.join(base, f))
         )
     return total_size
 
@@ -514,11 +588,11 @@ def get_disk_size(path):
 def get_locale_list():
     """Return list of available locales"""
     try:
-        with subprocess.Popen(['locale', '-a'], stdout=subprocess.PIPE) as locale_getter:
+        with subprocess.Popen(["locale", "-a"], stdout=subprocess.PIPE) as locale_getter:
             output = locale_getter.communicate()
-        locales = output[0].decode('ASCII').split()  # locale names use only ascii characters
+        locales = output[0].decode("ASCII").split()  # locale names use only ascii characters
     except FileNotFoundError:
-        lang = os.environ.get('LANG', '')
+        lang = os.environ.get("LANG", "")
         if lang:
             locales = [lang]
         else:
@@ -567,138 +641,3 @@ def set_keyboard_layout(layout):
         with subprocess.Popen(setxkbmap_command, env=os.environ, stdout=xkbcomp.stdin) as setxkbmap:
             setxkbmap.communicate()
             xkbcomp.communicate()
-
-
-def preload_vulkan_gpu_names(use_dri_prime):
-    """Runs threads to load the GPU data from vulkan info for each ICD file set,
-    and one for the default 'unspecified' info. The results are cached by @lru_cache,
-    so we can just ignore them here."""
-
-    try:
-        all_files = [":".join(fs) for fs in get_vk_icd_file_sets().values()]
-        all_files.append("")
-        for files in all_files:
-            # ignore any errors from get_vulkan_gpu_name
-            AsyncCall(get_vulkan_gpu_name, None, files, use_dri_prime, daemon=True)
-    except Exception as ex:
-        logger.exception("Failed to preload Vulkan GPU Names: %s", ex)
-
-
-# cache this to avoid calling vulkaninfo repeatedly, shouldn't change at runtime
-@lru_cache()
-def get_vulkan_gpu_name(icd_files, use_dri_prime):
-    """Runs vulkaninfo to determine the default and DRI_PRIME gpu if available,
-    returns 'Not Found' if the GPU is not found or 'Unknown GPU' if vulkaninfo
-    is not available."""
-
-    def fetch_vulkan_gpu_name(prime):
-        """Runs vulkaninfo to find the primary GPU"""
-        subprocess_env = dict(os.environ)
-        if icd_files:
-            subprocess_env["VK_DRIVER_FILES"] = icd_files
-            subprocess_env["VK_ICD_FILENAMES"] = icd_files
-        # How is prime going to be useful in case
-        # of full AMD setups or AMD + Intel setups?
-        if prime:
-            subprocess_env["DRI_PRIME"] = "1"
-
-        infocmd = "vulkaninfo --summary | grep deviceName | head -n 1 | tr -s '[:blank:]' | cut -d ' ' -f 3-"
-        with subprocess.Popen(infocmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                              env=subprocess_env) as infoget:
-            result = infoget.communicate()[0].decode("utf-8").strip()
-
-        if "Failed to detect any valid GPUs" in result or "ERROR: [Loader Message]" in result:
-            return "No GPU"
-
-        # Shorten result to just the friendly name of the GPU
-        # vulkaninfo returns Vendor Friendly Name (Chip Developer Name)
-        # AMD Radeon Pro W6800 (RADV NAVI21) -> AMD Radeon Pro W6800
-        return re.sub(r"\s*\(.*?\)", "", result)
-
-    if not shutil.which("vulkaninfo"):
-        logger.warning("vulkaninfo not available, unable to list GPUs")
-        return "Unknown GPU"
-
-    gpu = fetch_vulkan_gpu_name(False)
-
-    if use_dri_prime:
-        prime_gpu = fetch_vulkan_gpu_name(True)
-        if prime_gpu != gpu:
-            gpu += f" (Discrete GPU: {prime_gpu})"
-
-    return gpu or "Not Found"
-
-
-def get_vk_icd_file_sets():
-    """Returns the vulkan ICD files in a default-dict of lists; the keys are the separate
-    drivers, 'intel', 'amdradv', 'amdvlkpro', 'amdvlk', 'nvidia', and 'unknown'."""
-
-    def get_vk_icd_files():
-        """Returns available vulkan ICD files in the same search order as vulkan-loader,
-        but in a single list"""
-        all_icd_search_paths = []
-
-        def add_icd_search_path(paths):
-            if paths:
-                # unixy env vars with multiple paths are : delimited
-                for path in paths.split(":"):
-                    path = os.path.join(path, "vulkan")
-                    if os.path.exists(path) and path not in all_icd_search_paths:
-                        all_icd_search_paths.append(path)
-
-        # Must match behavior of
-        # https://github.com/KhronosGroup/Vulkan-Loader/blob/v1.3.235/docs/LoaderDriverInterface.md#driver-discovery-on-linux
-        # (or a newer version of the same standard)
-
-        # 1.a XDG_CONFIG_HOME or ~/.config if unset
-        add_icd_search_path(os.getenv("XDG_CONFIG_HOME") or (f"{os.getenv('HOME')}/.config"))
-        # 1.b XDG_CONFIG_DIRS
-        add_icd_search_path(os.getenv("XDG_CONFIG_DIRS") or "/etc/xdg")
-
-        # 2, 3 SYSCONFDIR and EXTRASYSCONFDIR
-        # Compiled in default has both the same
-        add_icd_search_path("/etc")
-
-        # 4 XDG_DATA_HOME
-        add_icd_search_path(os.getenv("XDG_DATA_HOME") or (f"{os.getenv('HOME')}/.local/share"))
-
-        # 5 XDG_DATA_DIRS or fall back to /usr/local/share and /usr/share
-        add_icd_search_path(os.getenv("XDG_DATA_DIRS") or "/usr/local/share:/usr/share")
-
-        # FALLBACK
-        # dirs that aren't from the loader spec are searched last
-        for fallback_dir in FALLBACK_VULKAN_DATA_DIRS:
-            add_icd_search_path(fallback_dir)
-
-        all_icd_files = []
-
-        for data_dir in all_icd_search_paths:
-            path = os.path.join(data_dir, "icd.d", "*.json")
-            # sort here as directory enumeration order is not guaranteed in linux
-            # so it's consistent every time
-            icd_files = sorted(glob.glob(path))
-            if icd_files:
-                all_icd_files += icd_files
-
-        return all_icd_files
-
-    sets = defaultdict(list)
-    all_icd_files = get_vk_icd_files()
-
-    # Add loaders for each vendor
-    for loader in all_icd_files:
-        if "intel" in loader:
-            sets["intel"].append(loader)
-        elif "radeon" in loader:
-            sets["amdradv"].append(loader)
-        elif "nvidia" in loader:
-            sets["nvidia"].append(loader)
-        elif "amd" in loader:
-            if "pro" in loader:
-                sets["amdvlkpro"].append(loader)
-            else:
-                sets["amdvlk"].append(loader)
-        else:
-            sets["unknown"].append(loader)
-
-    return sets

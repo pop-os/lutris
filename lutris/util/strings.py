@@ -1,22 +1,26 @@
 """String utilities"""
+
 import math
 import re
 import shlex
+import time
 import unicodedata
 import uuid
 from gettext import gettext as _
-from typing import List, Union
+from typing import List, Tuple, Union
+
+from gi.repository import GLib
 
 from lutris.util.log import logger
 
-NO_PLAYTIME = "Never played"
+NO_PLAYTIME = _("Never played")
 
 
-def get_uuid_from_string(value):
+def get_uuid_from_string(value: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, str(value)))
 
 
-def slugify(value) -> str:
+def slugify(value: str) -> str:
     """Remove special characters from a string and slugify it.
 
     Normalizes string, converts to lowercase, removes non-alpha characters,
@@ -39,25 +43,56 @@ def slugify(value) -> str:
     return slug
 
 
-def add_url_tags(text) -> str:
-    """Surround URL with <a> tags."""
-    return re.sub(
-        r"(http[s]?://("
-        r"?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+)",
-        r'<a href="\1">\1</a>',
-        text,
-    )
+def strip_accents(value: str) -> str:
+    """Returns a string that is 'value', but with combining characters removed.
+
+    This normalizes the text to form KD, which also removes any compatibility characters,
+    so things like ellipsis are expanded to '...'.
+
+    This also strips leading a trailing whitespace, and normalizes all remaining whitespace
+    to single spaces.
+
+    This does allow non-ASCII characters (like Greek or Cyrillic), and does not interfere with
+    casing.
+
+    We use this for a more forgiving search.
+    """
+    if value:
+        decomposed = unicodedata.normalize("NFKD", value)
+        result = ""
+        prev_whitespace = False
+        for ch in reversed(decomposed.strip()):
+            combining = unicodedata.combining(ch)
+            if not combining:
+                whitespace = ch.isspace()
+                if whitespace:
+                    if not prev_whitespace:
+                        result += " "
+                else:
+                    result += ch
+                prev_whitespace = whitespace
+        return result[::-1]  # We built the text backwards, so we must reverse it
+    return value
 
 
-def lookup_string_in_text(string, text):
-    """Return full line if string found in the multi-line text."""
-    output_lines = text.split("\n")
-    for line in output_lines:
-        if string in line:
-            return line
+def get_natural_sort_key(value: str, number_width: int = 16) -> str:
+    """Returns a string with the numerical parts (runs of digits)
+    0-padded out to 'number_width' digits."""
+
+    def pad_numbers(text):
+        return text.zfill(number_width) if text.isdigit() else text.casefold()
+
+    runs = [pad_numbers(c) for c in re.split("([0-9]+)", value)]
+    return "".join(runs)
 
 
-def parse_version(version):
+def lookup_strings_in_text(string: str, text: str) -> List[str]:
+    """Return each full line where a string was found in the multi-line text."""
+    input_lines = text.split("\n")
+    return [line for line in input_lines if string in line]
+
+
+def parse_version(version: str) -> Tuple[List[int], str, str]:
     """Parse a version string
 
     Return a 3 element tuple containing:
@@ -76,8 +111,8 @@ def parse_version(version):
     if not version_match:
         return [], "", ""
     version_number = version_match.groups()[0]
-    prefix = version[0:version_match.span()[0]]
-    suffix = version[version_match.span()[1]:]
+    prefix = version[0 : version_match.span()[0]]
+    suffix = version[version_match.span()[1] :]
     return [int(p) for p in version_number.split(".")], suffix, prefix
 
 
@@ -91,7 +126,7 @@ def unpack_dependencies(string: str) -> List[Union[str, tuple]]:
         [('quake-steam', 'quake-gog'), 'some-quake-mod']
     """
 
-    def _expand_dep(dep) -> Union[str, tuple]:
+    def _expand_dep(dep: str) -> Union[str, tuple]:
         if "|" in dep:
             return tuple(option.strip() for option in dep.split("|") if option.strip())
         return dep.strip()
@@ -101,16 +136,55 @@ def unpack_dependencies(string: str) -> List[Union[str, tuple]]:
     return [dep for dep in [_expand_dep(dep) for dep in string.split(",")] if dep]
 
 
-def gtk_safe(string: str) -> str:
-    """Return a string ready to used in Gtk widgets"""
-    if not string:
-        string = ""
-    string = str(string)
-    return string.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+def gtk_safe(text: str) -> str:
+    """Return a string ready to used in Gtk widgets, with anything that could
+    be Pango markup escaped."""
+    if not text:
+        return ""
+
+    return GLib.markup_escape_text(str(text))
 
 
-def get_formatted_playtime(playtime) -> str:
-    """Return a human readable value of the play time"""
+def gtk_safe_urls(text: str) -> str:
+    """Escapes the text as with gtk_safe, but detects URLs and converts them to
+    anchor tags as well."""
+    if not text:
+        return ""
+
+    parts = re.split(r"(http[s]?://(" r"?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+)", text)
+
+    for index, part in enumerate(parts):
+        if len(part) > 0:
+            part = gtk_safe(part)
+            if index % 2 != 0:  # every odd numbered part is the group in the regular expression
+                part = f'<a href="{part}">{part}</a>'
+            parts[index] = part
+
+    return "".join(parts)
+
+
+def is_valid_pango_markup(text: str) -> bool:
+    def destroy_func(_user_data):
+        pass  # required by GLib, but we don't need this callback
+
+    if len(text) == 0:
+        return True  # Trivial case - empty strings are always valid
+
+    try:
+        parser = GLib.MarkupParser()
+        # DEFAULT_FLAGS == 0, but was not defined before GLib 2.74 so
+        # we'll just hard-code the value.
+        context = GLib.MarkupParseContext(parser, 0, None, destroy_func)
+
+        markup = f"<markup>{text}</markup>"
+        context.parse(markup, len(markup))
+        return True
+    except GLib.GError:
+        return False
+
+
+def get_formatted_playtime(playtime: float) -> str:
+    """Return a human-readable value of the play time"""
     if not playtime:
         return NO_PLAYTIME
 
@@ -121,20 +195,12 @@ def get_formatted_playtime(playtime) -> str:
         return NO_PLAYTIME
 
     hours = math.floor(playtime)
-    if hours == 1:
-        hours_text = _("1 hour")
-    elif hours > 1:
-        hours_text = _("%d hours") % hours
-    else:
-        hours_text = ""
+    hours_unit = _("hour") if hours == 1 else _("hours")
+    hours_text = f"{hours} {hours_unit}" if hours > 0 else ""
 
-    minutes = int((playtime - hours) * 60)
-    if minutes == 1:
-        minutes_text = _("1 minute")
-    elif minutes > 1:
-        minutes_text = _("%d minutes") % minutes
-    else:
-        minutes_text = ""
+    minutes = int(round((playtime - hours) * 60, 0))
+    minutes_unit = _("minute") if minutes == 1 else _("minutes")
+    minutes_text = f"{minutes} {minutes_unit}" if minutes > 0 else ""
 
     formatted_time = " ".join([text for text in (hours_text, minutes_text) if text])
     if formatted_time:
@@ -144,7 +210,73 @@ def get_formatted_playtime(playtime) -> str:
     return NO_PLAYTIME
 
 
-def _split_arguments(args, closing_quot='', quotations=None) -> list:
+def parse_playtime(text: str) -> float:
+    """Parses a textual playtime into hours"""
+    text = text.strip().casefold()
+
+    if _("Less than a minute").casefold() == text:
+        return 0.0
+
+    if NO_PLAYTIME.casefold() == text:
+        return 0.0
+
+    # Handle a single number - assumed to be a count of hours
+    try:
+        return float(text)
+    except ValueError:
+        pass
+
+    # Handle the easy case of "6:23".
+    parts = text.split(":")
+    if len(parts) == 2 and parts[0].strip().isdigit() and parts[1].strip().isdigit():
+        hours = int(parts[0])
+        minutes = int(parts[1])
+        return hours + minutes / 60
+
+    playtime = 0.0
+    error_message = _("'%s' is not a valid playtime.") % text
+
+    def find_hours(num: float, unit: str) -> float:
+        # This function works out how many hours are meant by some
+        # number of some unit.
+        hour_units = ["h", "hr", "hours", "hour", _("hour"), _("hours")]
+        minute_units = ["m", "min", "minute", "minutes", _("minute"), _("minutes")]
+        if unit in hour_units:
+            return num
+        if unit in minute_units:
+            return num / 60
+        raise ValueError(error_message)
+
+    # Handle the fancy format made of number unit pairts, like
+    # "1 hour 23 minutes" or "2h57m"; we split this up into digit
+    # and non-digit parts.
+    parts = [p.strip() for p in re.split("([0-9.,]+)", text) if p and not p.isspace()]
+    parts_iter = iter(parts)
+
+    try:
+        while True:
+            num_text = next(parts_iter)
+            try:
+                num = float(num_text)
+            except ValueError as ex:
+                raise ValueError(error_message) from ex
+
+            try:
+                unit = next(parts_iter)
+            except StopIteration as ex:
+                if playtime:
+                    unit = "minutes"
+                else:
+                    raise ValueError(error_message) from ex
+
+            playtime += find_hours(num, unit)
+    except StopIteration:
+        pass
+
+    return playtime
+
+
+def _split_arguments(args: str, closing_quot: str = "", quotations: str = None) -> List[str]:
     if quotations is None:
         quotations = ["'", '"']
     try:
@@ -157,7 +289,7 @@ def _split_arguments(args, closing_quot='', quotations=None) -> list:
         return []
 
 
-def split_arguments(args) -> list:
+def split_arguments(args: str) -> List[str]:
     """Wrapper around shlex.split that is more tolerant of errors"""
     if not args:
         # shlex.split seems to hangs when passed the None value
@@ -165,7 +297,7 @@ def split_arguments(args) -> list:
     return _split_arguments(args)
 
 
-def human_size(size) -> str:
+def human_size(size: int) -> str:
     """Shows a size in bytes in a more readable way"""
     units = ("bytes", "kB", "MB", "GB", "TB", "PB", "nuh uh", "no way", "BS")
     unit_index = 0
@@ -173,3 +305,42 @@ def human_size(size) -> str:
         size = size / 1024
         unit_index += 1
     return "%0.1f %s" % (size, units[unit_index])
+
+
+def time_ago(timestamp: float) -> str:
+    time_delta = time.time() - timestamp
+
+    original_time_delta = time_delta
+    if time_delta < 0:
+        return _("in the future")
+    if time_delta < 5:
+        return _("just now")
+    parts = []
+    day_in_seconds = 3600 * 24
+    hour_in_seconds = 3600
+    days = 0
+    hours = 0
+    if time_delta >= 2 * day_in_seconds:
+        days = int(time_delta // day_in_seconds)
+        time_delta = time_delta - days * day_in_seconds
+        parts.append(_("%d days") % days)
+    if time_delta > 2 * hour_in_seconds:
+        hours = int(time_delta // hour_in_seconds)
+        time_delta = time_delta - hours * hour_in_seconds
+        parts.append(_("%d hours") % hours)
+    if not days and hours < 5 and time_delta > 60:
+        minutes = int(time_delta // 60)
+        time_delta = time_delta - minutes * 60
+        if minutes != 1:
+            parts.append(_("%d minutes") % minutes)
+        else:
+            parts.append(_("1 minute"))
+    if original_time_delta < 90:
+        seconds = int(time_delta)
+        if seconds != 1:
+            parts.append(_("%d seconds") % seconds)
+        else:
+            parts.append(_("1 second"))
+
+    parts.append(_("ago"))
+    return " ".join(parts)

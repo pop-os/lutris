@@ -1,4 +1,5 @@
 """libretro runner"""
+
 import os
 from gettext import gettext as _
 from operator import itemgetter
@@ -7,6 +8,7 @@ from zipfile import ZipFile
 import requests
 
 from lutris import settings
+from lutris.exceptions import GameConfigError, MissingGameExecutableError, UnspecifiedVersionError
 from lutris.runners.runner import Runner
 from lutris.util import system
 from lutris.util.libretro import RetroConfig
@@ -26,15 +28,11 @@ def get_libretro_cores():
     # Get core identifiers from info dir
     info_path = get_default_config_path("info")
     if not os.path.exists(info_path):
-        req = requests.get(
-            "http://buildbot.libretro.com/assets/frontend/info.zip",
-            allow_redirects=True,
-            timeout=5
-        )
+        req = requests.get("http://buildbot.libretro.com/assets/frontend/info.zip", allow_redirects=True, timeout=5)
         if req.status_code == requests.codes.ok:  # pylint: disable=no-member
-            with open(get_default_config_path('info.zip'), 'wb') as info_zip:
+            with open(get_default_config_path("info.zip"), "wb") as info_zip:
                 info_zip.write(req.content)
-            with ZipFile(get_default_config_path('info.zip'), 'r') as info_zip:
+            with ZipFile(get_default_config_path("info.zip"), "r") as info_zip:
                 info_zip.extractall(info_path)
         else:
             logger.error("Error retrieving libretro info archive from server: %s - %s", req.status_code, req.reason)
@@ -72,11 +70,7 @@ class libretro(Runner):
     flatpak_id = "org.libretro.RetroArch"
 
     game_options = [
-        {
-            "option": "main_file",
-            "type": "file",
-            "label": _("ROM file")
-        },
+        {"option": "main_file", "type": "file", "label": _("ROM file")},
         {
             "option": "core",
             "type": "choice",
@@ -107,6 +101,10 @@ class libretro(Runner):
     ]
 
     @property
+    def directory(self):
+        return os.path.join(settings.RUNNER_DIR, "retroarch")
+
+    @property
     def platforms(self):
         return [core[2] for core in LIBRETRO_CORES]
 
@@ -123,7 +121,7 @@ class libretro(Runner):
 
     def get_core_path(self, core):
         """Return the path of a core, prioritizing Retroarch cores"""
-        lutris_cores_folder = os.path.join(settings.RUNNER_DIR, "retroarch", "cores")
+        lutris_cores_folder = os.path.join(self.directory, "cores")
         retroarch_core_folder = os.path.join(os.path.expanduser("~/.config/retroarch/cores"))
         core_filename = "{}_libretro.so".format(core)
         retroarch_core = os.path.join(retroarch_core_folder, core_filename)
@@ -134,13 +132,23 @@ class libretro(Runner):
     def get_version(self, use_default=True):
         return self.game_config["core"]
 
-    def is_installed(self, core=None):
+    def is_installed(self, flatpak_allowed: bool = True, core=None) -> bool:
         if not core and self.has_explicit_config and self.game_config.get("core"):
             core = self.game_config["core"]
         if not core or self.runner_config.get("runner_executable"):
-            return super().is_installed()
+            return super().is_installed(flatpak_allowed=flatpak_allowed)
         is_core_installed = system.path_exists(self.get_core_path(core))
-        return super().is_installed() and is_core_installed
+        return super().is_installed(flatpak_allowed=flatpak_allowed) and is_core_installed
+
+    def is_installed_for(self, interpreter):
+        core = interpreter.installer.script["game"].get("core")
+        return self.is_installed(core=core)
+
+    def get_installer_runner_version(self, installer, use_runner_config: bool = True) -> str:
+        version = installer.script["game"].get("core")
+        if not version:
+            raise UnspecifiedVersionError(_("The installer does not specify the libretro 'core' version."))
+        return version
 
     def install(self, install_ui_delegate, version=None, callback=None):
         captured_super = super()  # super() does not work inside install_core()
@@ -180,7 +188,7 @@ class libretro(Runner):
         # TODO: review later
         # Create retroarch.cfg if it doesn't exist.
         if not system.path_exists(config_file):
-            with open(config_file, "w", encoding='utf-8') as f:
+            with open(config_file, "w", encoding="utf-8") as f:
                 f.write("# Lutris RetroArch Configuration")
                 f.close()
 
@@ -265,33 +273,14 @@ class libretro(Runner):
         # Core
         core = self.game_config.get("core")
         if not core:
-            return {
-                "error": "CUSTOM",
-                "text": _("No core has been selected for this game"),
-            }
+            raise GameConfigError(_("No core has been selected for this game"))
         command.append("--libretro={}".format(self.get_core_path(core)))
-
-        # Ensure the core is available
-        if not self.is_installed(core):
-            self.install(core)
 
         # Main file
         file = self.game_config.get("main_file")
         if not file:
-            return {"error": "CUSTOM", "text": _("No game file specified")}
+            raise GameConfigError(_("No game file specified"))
         if not system.path_exists(file):
-            return {"error": "FILE_NOT_FOUND", "file": file}
+            raise MissingGameExecutableError(filename=file)
         command.append(file)
         return {"command": command}
-
-    # Checks whether the retroarch or libretro directories can be uninstalled.
-    def can_uninstall(self):
-        retroarch_path = os.path.join(settings.RUNNER_DIR, 'retroarch')
-        return os.path.isdir(retroarch_path) or super().can_uninstall()
-
-    # Remove the `retroarch` directory.
-    def uninstall(self):
-        retroarch_path = os.path.join(settings.RUNNER_DIR, 'retroarch')
-        if os.path.isdir(retroarch_path):
-            system.remove_folder(retroarch_path)
-        super().uninstall()

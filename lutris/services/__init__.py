@@ -1,4 +1,5 @@
 """Service package"""
+
 import os
 
 from lutris import settings
@@ -23,13 +24,12 @@ from lutris.util import system
 from lutris.util.dolphin.cache_reader import DOLPHIN_GAME_CACHE_FILE
 from lutris.util.linux import LINUX_SYSTEM
 
-DEFAULT_SERVICES = ["lutris", "gog", "egs", "ea_app", "ubisoft", "steam"]
+DEFAULT_SERVICES = ["gog", "egs", "ea_app", "ubisoft", "steam"]
 
 
 def get_services():
     """Return a mapping of available services"""
     _services = {
-        "lutris": LutrisService,
         "gog": GOGService,
         "humblebundle": HumbleBundleService,
         "egs": EpicGamesStoreService,
@@ -38,19 +38,21 @@ def get_services():
         "ea_app": EAAppService,
         "ubisoft": UbisoftConnectService,
         "amazon": AmazonService,
-        "flathub": FlathubService
+        "flathub": FlathubService,
     }
     if BNET_ENABLED:
         _services["battlenet"] = BattleNetService
-    if not LINUX_SYSTEM.is_flatpak:
+    if not LINUX_SYSTEM.is_flatpak():
         _services["xdg"] = XDGService
-    if LINUX_SYSTEM.has_steam:
+    if LINUX_SYSTEM.has_steam():
         _services["steam"] = SteamService
     _services["steamwindows"] = SteamWindowsService
     if system.path_exists(DOLPHIN_GAME_CACHE_FILE):
         _services["dolphin"] = DolphinService
     if system.path_exists(SCUMMVM_CONFIG_FILE):
         _services["scummvm"] = ScummvmService
+    if os.environ.get("LUTRIS_SERVICE_ENABLED") == "1":
+        _services["lutris"] = LutrisService
     return _services
 
 
@@ -60,7 +62,6 @@ SERVICES = get_services()
 # Those services are not yet ready to be used
 WIP_SERVICES = {
     "mame": MAMEService,
-
 }
 
 if os.environ.get("LUTRIS_ENABLE_ALL_SERVICES"):
@@ -69,6 +70,7 @@ if os.environ.get("LUTRIS_ENABLE_ALL_SERVICES"):
 
 def get_enabled_services():
     return {
-        key: _class for key, _class in SERVICES.items()
+        key: _class
+        for key, _class in SERVICES.items()
         if settings.read_setting(key, section="services").lower() == "true"
     }

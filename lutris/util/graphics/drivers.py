@@ -3,10 +3,12 @@
 
 Everything in this module should rely on /proc or /sys only, no executable calls
 """
+
 import os
 import re
 from typing import Dict, Iterable, List
 
+from lutris.util import cache_single
 from lutris.util.graphics.glxinfo import GlxInfo
 from lutris.util.log import logger
 from lutris.util.system import read_process_output
@@ -14,11 +16,12 @@ from lutris.util.system import read_process_output
 MIN_RECOMMENDED_NVIDIA_DRIVER = 515
 
 
+@cache_single
 def get_nvidia_driver_info() -> Dict[str, Dict[str, str]]:
     """Return information about NVidia drivers"""
+    version_file_path = "/proc/driver/nvidia/version"
 
     def read_from_proc() -> Dict[str, Dict[str, str]]:
-        version_file_path = "/proc/driver/nvidia/version"
         try:
             if not os.path.exists(version_file_path):
                 return {}
@@ -41,21 +44,17 @@ def get_nvidia_driver_info() -> Dict[str, Dict[str, str]]:
         nvrm_version = content[0].split(": ")[1].strip().split()
         if "Open" in nvrm_version:
             return {
-                "nvrm": {
-                    "vendor": nvrm_version[0],
-                    "platform": nvrm_version[1],
-                    "arch": nvrm_version[6],
-                    "version": nvrm_version[7],
-                }
-            }
-        return {
-            "nvrm": {
                 "vendor": nvrm_version[0],
                 "platform": nvrm_version[1],
-                "arch": nvrm_version[2],
-                "version": nvrm_version[5],
-                "date": " ".join(nvrm_version[6:]),
+                "arch": nvrm_version[6],
+                "version": nvrm_version[7],
             }
+        return {
+            "vendor": nvrm_version[0],
+            "platform": nvrm_version[1],
+            "arch": nvrm_version[2],
+            "version": nvrm_version[5],
+            "date": " ".join(nvrm_version[6:]),
         }
 
     def invoke_glxinfo() -> Dict[str, Dict[str, str]]:
@@ -66,15 +65,20 @@ def get_nvidia_driver_info() -> Dict[str, Dict[str, str]]:
         if "nvidia" not in vendor.lower():
             raise RuntimeError("Expected NVIDIA vendor information, received %s." % vendor)
         return {
-            "nvrm": {
-                "vendor": vendor,
-                "platform": platform,
-                "arch": arch,
-                "version": glx_info.opengl_version.rsplit(maxsplit=1)[-1],  # type: ignore[attr-defined]
-            }
+            "vendor": vendor,
+            "platform": platform,
+            "arch": arch,
+            "version": glx_info.opengl_version.rsplit(maxsplit=1)[-1],  # type: ignore[attr-defined]
         }
 
-    return read_from_proc() or invoke_glxinfo()
+    try:
+        from_proc = read_from_proc()
+        if from_proc:
+            return from_proc
+    except Exception as ex:
+        logger.exception("Unable to read from '%s': %s", version_file_path, ex)
+
+    return invoke_glxinfo()
 
 
 def get_nvidia_gpu_ids() -> List[str]:
@@ -85,13 +89,9 @@ def get_nvidia_gpu_ids() -> List[str]:
     except PermissionError:
         logger.info("Permission denied to %s. Using lspci instead.", gpus_dir)
     except OSError as e:
-        logger.warning(
-            "Unexpected error accessing %s. Using lspci instead.", gpus_dir, exc_info=e
-        )
-    values = read_process_output(
-        # 10de is NVIDIA's vendor ID, 0300 gets you video controllers.
-        ["lspci", "-D", "-n", "-d", "10de::0300"],
-    ).splitlines()
+        logger.warning("Unexpected error accessing %s. Using lspci instead.", gpus_dir, exc_info=e)
+    # 10de is NVIDIA's vendor ID, 0300 gets you video controllers.
+    values = read_process_output(["lspci", "-D", "-n", "-d", "10de::0300"]).splitlines()
     return [line.split(maxsplit=1)[0] for line in values]
 
 
@@ -115,6 +115,10 @@ def get_nvidia_gpu_info(gpu_id: str) -> Dict[str, str]:
             key, value = line.split(":", 1)
             info[key] = value.strip()
         return info
+    return get_lspci_nvidia_gpu_info(gpu_id)
+
+
+def get_lspci_nvidia_gpu_info(gpu_id: str) -> Dict[str, str]:
     lspci_data = read_process_output(["lspci", "-v", "-s", gpu_id])
     model_info = re.search(r"NVIDIA Corporation \w+ \[(.+?)\]", lspci_data)
     if model_info:
@@ -131,8 +135,8 @@ def get_nvidia_gpu_info(gpu_id: str) -> Dict[str, str]:
 
     info = {
         "Model": f"NVIDIA {model}",
-        "IRQ": irq,
-        "Bus Location": gpu_id,
+        "IRQ": str(irq),
+        "Bus Location": str(gpu_id),
     }
     for line in lspci_data.splitlines():
         if ":" not in line:
@@ -151,24 +155,18 @@ def is_nvidia() -> bool:
     try:
         return os.path.exists("/proc/driver/nvidia")
     except OSError:
-        logger.info(
-            "Could not determine whether /proc/driver/nvidia exists. "
-            "Falling back to alternative method"
-        )
+        logger.info("Could not determine whether /proc/driver/nvidia exists. " "Falling back to alternative method")
     try:
         with open("/proc/modules", encoding="utf-8") as f:
             modules = f.read()
         return bool(re.search(r"^nvidia ", modules, flags=re.MULTILINE))
     except OSError:
-        logger.error(
-            "Could not access /proc/modules to find the Nvidia drivers. "
-            "Nvidia card may not be detected."
-        )
+        logger.error("Could not access /proc/modules to find the Nvidia drivers. " "Nvidia card may not be detected.")
     glx_info = GlxInfo()
     return "NVIDIA" in glx_info.opengl_vendor  # type: ignore[attr-defined]
 
 
-def get_gpus() -> Iterable[str]:
+def get_gpu_cards() -> Iterable[str]:
     """Return GPUs connected to the system"""
     if not os.path.exists("/sys/class/drm"):
         logger.error("No GPU available on this system!")
@@ -176,9 +174,7 @@ def get_gpus() -> Iterable[str]:
     try:
         cardlist = os.listdir("/sys/class/drm/")
     except PermissionError:
-        logger.error(
-            "Your system does not allow reading from /sys/class/drm, no GPU detected."
-        )
+        logger.error("Your system does not allow reading from /sys/class/drm, no GPU detected.")
         return []
     for cardname in cardlist:
         if re.match(r"^card\d$", cardname):
@@ -189,9 +185,7 @@ def get_gpu_info(card: str) -> Dict[str, str]:
     """Return information about a GPU"""
     infos = {"DRIVER": "", "PCI_ID": "", "PCI_SUBSYS_ID": ""}
     try:
-        with open(
-            f"/sys/class/drm/{card}/device/uevent", encoding="utf-8"
-        ) as card_uevent:
+        with open(f"/sys/class/drm/{card}/device/uevent", encoding="utf-8") as card_uevent:
             content = card_uevent.readlines()
     except FileNotFoundError:
         logger.error("Unable to read driver information for card %s", card)
@@ -204,38 +198,17 @@ def get_gpu_info(card: str) -> Dict[str, str]:
 
 def is_amd() -> bool:
     """Return true if the system uses the AMD driver"""
-    for card in get_gpus():
+    for card in get_gpu_cards():
         if get_gpu_info(card)["DRIVER"] == "amdgpu":
             return True
     return False
-
-
-def check_driver() -> None:
-    """Report on the currently running driver"""
-    if is_nvidia():
-        driver_info = get_nvidia_driver_info()
-        # pylint: disable=logging-format-interpolation
-        logger.info(
-            "Using {vendor} drivers {version} for {arch}".format(**driver_info["nvrm"])
-        )
-        gpus = get_nvidia_gpu_ids()
-        for gpu_id in gpus:
-            gpu_info = get_nvidia_gpu_info(gpu_id)
-            logger.info("GPU: %s", gpu_info.get("Model"))
-    for card in get_gpus():
-        # pylint: disable=logging-format-interpolation
-        logger.info(
-            "GPU: {PCI_ID} {PCI_SUBSYS_ID} using {DRIVER} driver".format(
-                **get_gpu_info(card)
-            )
-        )
 
 
 def is_outdated() -> bool:
     if not is_nvidia():
         return False
     driver_info = get_nvidia_driver_info()
-    driver_version = driver_info["nvrm"]["version"]
+    driver_version = driver_info["version"]
     if not driver_version:
         logger.error("Failed to get Nvidia version")
         return True

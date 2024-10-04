@@ -4,146 +4,47 @@ from lutris.util.log import logger
 
 DATABASE = {
     "games": [
-        {
-            "name": "id",
-            "type": "INTEGER",
-            "indexed": True
-        },
-        {
-            "name": "name",
-            "type": "TEXT"
-        },
+        {"name": "id", "type": "INTEGER", "indexed": True},
+        {"name": "name", "type": "TEXT"},
         {
             "name": "sortname",
             "type": "TEXT",
         },
-        {
-            "name": "slug",
-            "type": "TEXT"
-        },
-        {
-            "name": "installer_slug",
-            "type": "TEXT"
-        },
-        {
-            "name": "parent_slug",
-            "type": "TEXT"
-        },
-        {
-            "name": "platform",
-            "type": "TEXT"
-        },
-        {
-            "name": "runner",
-            "type": "TEXT"
-        },
-        {
-            "name": "executable",
-            "type": "TEXT"
-        },
-        {
-            "name": "directory",
-            "type": "TEXT"
-        },
-        {
-            "name": "updated",
-            "type": "DATETIME"
-        },
-        {
-            "name": "lastplayed",
-            "type": "INTEGER"
-        },
-        {
-            "name": "installed",
-            "type": "INTEGER"
-        },
-        {
-            "name": "installed_at",
-            "type": "INTEGER"
-        },
-        {
-            "name": "year",
-            "type": "INTEGER"
-        },
-        {
-            "name": "configpath",
-            "type": "TEXT"
-        },
-        {
-            "name": "has_custom_banner",
-            "type": "INTEGER"
-        },
-        {
-            "name": "has_custom_icon",
-            "type": "INTEGER"
-        },
-        {
-            "name": "has_custom_coverart_big",
-            "type": "INTEGER"
-        },
-        {
-            "name": "playtime",
-            "type": "REAL"
-        },
-        {
-            "name": "hidden",
-            "type": "INTEGER"
-        },
-        {
-            "name": "service",
-            "type": "TEXT"
-        },
-        {
-            "name": "service_id",
-            "type": "TEXT"
-        },
+        {"name": "slug", "type": "TEXT"},
+        {"name": "installer_slug", "type": "TEXT"},
+        {"name": "parent_slug", "type": "TEXT"},
+        {"name": "platform", "type": "TEXT"},
+        {"name": "runner", "type": "TEXT"},
+        {"name": "executable", "type": "TEXT"},
+        {"name": "directory", "type": "TEXT"},
+        {"name": "updated", "type": "DATETIME"},
+        {"name": "lastplayed", "type": "INTEGER"},
+        {"name": "installed", "type": "INTEGER"},
+        {"name": "installed_at", "type": "INTEGER"},
+        {"name": "year", "type": "INTEGER"},
+        {"name": "configpath", "type": "TEXT"},
+        {"name": "has_custom_banner", "type": "INTEGER"},
+        {"name": "has_custom_icon", "type": "INTEGER"},
+        {"name": "has_custom_coverart_big", "type": "INTEGER"},
+        {"name": "playtime", "type": "REAL"},
+        {"name": "service", "type": "TEXT"},
+        {"name": "service_id", "type": "TEXT"},
         {
             "name": "discord_id",
             "type": "TEXT",
         },
     ],
     "service_games": [
-        {
-            "name": "id",
-            "type": "INTEGER",
-            "indexed": True
-        },
-        {
-            "name": "service",
-            "type": "TEXT"
-        },
-        {
-            "name": "appid",
-            "type": "TEXT"
-        },
-        {
-            "name": "name",
-            "type": "TEXT"
-        },
-        {
-            "name": "slug",
-            "type": "TEXT"
-        },
-        {
-            "name": "icon",
-            "type": "TEXT"
-        },
-        {
-            "name": "logo",
-            "type": "TEXT"
-        },
-        {
-            "name": "url",
-            "type": "TEXT"
-        },
-        {
-            "name": "details",
-            "type": "TEXT"
-        },
-        {
-            "name": "lutris_slug",
-            "type": "TEXT"
-        },
+        {"name": "id", "type": "INTEGER", "indexed": True},
+        {"name": "service", "type": "TEXT"},
+        {"name": "appid", "type": "TEXT"},
+        {"name": "name", "type": "TEXT"},
+        {"name": "slug", "type": "TEXT"},
+        {"name": "icon", "type": "TEXT"},
+        {"name": "logo", "type": "TEXT"},
+        {"name": "url", "type": "TEXT"},
+        {"name": "details", "type": "TEXT"},
+        {"name": "lutris_slug", "type": "TEXT"},
     ],
     "sources": [
         {"name": "id", "type": "INTEGER", "indexed": True},
@@ -156,7 +57,7 @@ DATABASE = {
     "games_categories": [
         {"name": "game_id", "type": "INTEGER", "indexed": False},
         {"name": "category_id", "type": "INTEGER", "indexed": False},
-    ]
+    ],
 }
 
 
@@ -172,7 +73,7 @@ def get_schema(tablename):
     """
     tables = []
     query = "pragma table_info('%s')" % tablename
-    with sql.db_cursor(settings.PGA_DB) as cursor:
+    with sql.db_cursor(settings.DB_PATH) as cursor:
         for row in cursor.execute(query).fetchall():
             field = {
                 "name": row[1],
@@ -199,8 +100,8 @@ def create_table(name, schema):
     """Creates a new table in the database"""
     fields = ", ".join([field_to_string(**f) for f in schema])
     query = "CREATE TABLE IF NOT EXISTS %s (%s)" % (name, fields)
-    logger.debug("[PGAQuery] %s", query)
-    with sql.db_cursor(settings.PGA_DB) as cursor:
+    logger.debug("[Query] %s", query)
+    with sql.db_cursor(settings.DB_PATH) as cursor:
         cursor.execute(query)
 
 
@@ -225,7 +126,7 @@ def migrate(table, schema):
             if field["name"] not in columns:
                 logger.info("Migrating %s field %s", table, field["name"])
                 migrated_fields.append(field["name"])
-                sql.add_field(settings.PGA_DB, table, field)
+                sql.add_field(settings.DB_PATH, table, field)
     else:
         create_table(table, schema)
     return migrated_fields

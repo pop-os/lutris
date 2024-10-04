@@ -4,10 +4,14 @@ from gi.repository import Gtk
 def update_action_widget_visibility(widgets, visible_predicate):
     """This sets the visibility on a set of widgets, like menu items. You provide a function
     that indicates if an item is visible, or None for separators that are visible based on
-    their neighbors."""
+    their neighbors. Returns the count of visible widgets that are not separators."""
+    visible_count = 0
     previous_visible_widget = None
     for w in widgets:
         visible = visible_predicate(w)
+
+        if visible:
+            visible_count = visible_count + 1
 
         if visible is None:
             if previous_visible_widget is None:
@@ -19,8 +23,9 @@ def update_action_widget_visibility(widgets, visible_predicate):
         if visible:
             previous_visible_widget = w
 
-    if visible_predicate(previous_visible_widget) is None:
+    if previous_visible_widget and visible_predicate(previous_visible_widget) is None:
         previous_visible_widget.set_visible(False)
+    return visible_count
 
 
 class ContextualMenu(Gtk.Menu):
@@ -51,30 +56,13 @@ class ContextualMenu(Gtk.Menu):
         self.append(menu_item)
         return menu_item
 
-    def get_runner_entries(self, game):
-        if not game:
-            return None
-
-        runner = game.runner
-
-        if not runner:
-            return None
-
-        return runner.context_menu_entries
-
-    def popup(self, event, game_actions, game=None, service=None):
+    def popup(self, event, game_actions):
         for item in self.get_children():
             self.remove(item)
 
         for entry in self.main_entries:
             self.add_menuitem(entry)
 
-        if game_actions.game.runner_name and game_actions.game.is_installed:
-            runner_entries = self.get_runner_entries(game)
-            if runner_entries:
-                self.append(Gtk.SeparatorMenuItem())
-                for entry in runner_entries:
-                    self.add_menuitem(entry)
         self.show_all()
 
         displayed = game_actions.get_displayed_entries()
@@ -85,6 +73,7 @@ class ContextualMenu(Gtk.Menu):
 
             return displayed.get(w.action_id, True)
 
-        update_action_widget_visibility(self.get_children(), is_visible)
+        visible_count = update_action_widget_visibility(self.get_children(), is_visible)
 
-        super().popup_at_pointer(event)
+        if visible_count > 0:
+            self.popup_at_pointer(event)

@@ -1,4 +1,5 @@
 """Store object for a list of games"""
+
 # pylint: disable=not-an-iterable
 import time
 
@@ -6,14 +7,27 @@ from gi.repository import GLib, GObject, Gtk
 
 from lutris import settings
 from lutris.database import sql
-from lutris.database.games import get_games
+from lutris.database.games import get_all_installed_game_for_service, get_games
 from lutris.gui.views.store_item import StoreItem
 from lutris.util.strings import gtk_safe
 
 from . import (
-    COL_ID, COL_INSTALLED, COL_INSTALLED_AT, COL_INSTALLED_AT_TEXT, COL_LASTPLAYED, COL_LASTPLAYED_TEXT, COL_MEDIA_PATH,
-    COL_NAME, COL_PLATFORM, COL_PLAYTIME, COL_PLAYTIME_TEXT, COL_RUNNER, COL_RUNNER_HUMAN_NAME, COL_SLUG, COL_SORTNAME,
-    COL_YEAR
+    COL_ID,
+    COL_INSTALLED,
+    COL_INSTALLED_AT,
+    COL_INSTALLED_AT_TEXT,
+    COL_LASTPLAYED,
+    COL_LASTPLAYED_TEXT,
+    COL_MEDIA_PATHS,
+    COL_NAME,
+    COL_PLATFORM,
+    COL_PLAYTIME,
+    COL_PLAYTIME_TEXT,
+    COL_RUNNER,
+    COL_RUNNER_HUMAN_NAME,
+    COL_SLUG,
+    COL_SORTNAME,
+    COL_YEAR,
 )
 
 
@@ -55,10 +69,6 @@ def sort_func(model, row1, row2, sort_col):
 
 
 class GameStore(GObject.Object):
-    __gsignals__ = {
-        "icons-changed": (GObject.SIGNAL_RUN_FIRST, None, ()),
-    }
-
     def __init__(self, service, service_media):
         super().__init__()
         self.service = service
@@ -72,7 +82,7 @@ class GameStore(GObject.Object):
             str,
             str,
             str,
-            str,
+            GObject.TYPE_PYOBJECT,
             str,
             str,
             str,
@@ -93,11 +103,6 @@ class GameStore(GObject.Object):
         if self._installed_games_accessed - previous_access > 1:
             self._installed_games = [g["slug"] for g in get_games(filters={"installed": "1"})]
         return self._installed_games
-
-    def add_games(self, games):
-        """Add games to the store"""
-        for game in list(games):
-            GLib.idle_add(self.add_game, game)
 
     def get_row_by_slug(self, slug):
         for model_row in self.store:
@@ -121,13 +126,13 @@ class GameStore(GObject.Object):
             self.store.remove(row.iter)
 
     def update(self, db_game):
-        """Update game informations
+        """Update game information
         Return whether a row was updated; False if the game was not already
         present.
         """
         store_item = StoreItem(db_game, self.service_media)
         row = self.get_row_by_id(store_item.id)
-        if not row:
+        if not row and "service_id" in db_game:
             row = self.get_row_by_id(db_game["service_id"])
         if not row:
             return False
@@ -135,7 +140,7 @@ class GameStore(GObject.Object):
         row[COL_SLUG] = store_item.slug
         row[COL_NAME] = store_item.name
         row[COL_SORTNAME] = store_item.sortname if store_item.sortname else store_item.name
-        row[COL_MEDIA_PATH] = store_item.get_media_path() if settings.SHOW_MEDIA else None
+        row[COL_MEDIA_PATHS] = store_item.get_media_paths() if settings.SHOW_MEDIA else []
         row[COL_YEAR] = store_item.year
         row[COL_RUNNER] = store_item.runner
         row[COL_RUNNER_HUMAN_NAME] = store_item.runner_text
@@ -150,47 +155,59 @@ class GameStore(GObject.Object):
         return True
 
     def add_game(self, db_game):
-        """Add a PGA game to the store"""
-        game = StoreItem(db_game, self.service_media)
+        """Add a game to the store"""
+        store_item = StoreItem(db_game, self.service_media)
+        self.add_item(store_item)
+
+    def add_item(self, store_item):
         self.store.append(
             (
-                str(game.id),
-                game.slug,
-                game.name,
-                game.sortname if game.sortname else game.name,
-                game.get_media_path() if settings.SHOW_MEDIA else None,
-                game.year,
-                game.runner,
-                game.runner_text,
-                gtk_safe(game.platform),
-                game.lastplayed,
-                game.lastplayed_text,
-                game.installed,
-                game.installed_at,
-                game.installed_at_text,
-                game.playtime,
-                game.playtime_text,
+                store_item.id,
+                store_item.slug,
+                store_item.name,
+                store_item.sortname if store_item.sortname else store_item.name,
+                store_item.get_media_paths() if settings.SHOW_MEDIA else [],
+                store_item.year,
+                store_item.runner,
+                store_item.runner_text,
+                gtk_safe(store_item.platform),
+                store_item.lastplayed,
+                store_item.lastplayed_text,
+                store_item.installed,
+                store_item.installed_at,
+                store_item.installed_at_text,
+                store_item.playtime,
+                store_item.playtime_text,
             )
         )
+
+    def add_preloaded_games(self, db_games, service_id):
+        """Add games to the store, but preload their installed-game data
+        all at once, for faster database access. This should be used if all or almost all
+        games are being loaded."""
+
+        installed_db_games = {}
+        if service_id and db_games:
+            installed_db_games = get_all_installed_game_for_service(service_id)
+
+        for db_game in db_games:
+            if installed_db_games is not None and "appid" in db_game:
+                appid = db_game["appid"]
+                store_item = StoreItem(db_game, self.service_media)
+                store_item.apply_installed_game_data(installed_db_games.get(appid))
+                self.add_item(store_item)
+            else:
+                self.add_game(db_game)
 
     def on_game_updated(self, game):
         if self.service:
             db_games = sql.filtered_query(
-                settings.PGA_DB,
+                settings.DB_PATH,
                 "service_games",
-                filters=({
-                    "service": self.service_media.service,
-                    "appid": game.appid
-                })
+                filters=({"service": self.service_media.service, "appid": game.appid}),
             )
         else:
-            db_games = sql.filtered_query(
-                settings.PGA_DB,
-                "games",
-                filters=({
-                    "id": game.id
-                })
-            )
+            db_games = sql.filtered_query(settings.DB_PATH, "games", filters=({"id": game.id}))
 
         for db_game in db_games:
             GLib.idle_add(self.update, db_game)

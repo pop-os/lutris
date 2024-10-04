@@ -1,6 +1,6 @@
 from gettext import gettext as _
 
-from gi.repository import GLib, GObject, Gtk
+from gi.repository import GObject, Gtk
 
 from lutris import settings
 from lutris.gui.config.base_config_box import BaseConfigBox
@@ -16,15 +16,15 @@ class ServicesBox(BaseConfigBox):
     def __init__(self):
         super().__init__()
         self.add(self.get_section_label(_("Enable integrations with game sources")))
-        self.add(self.get_description_label(
-            _("Access your game libraries from various sources. "
-              "Changes require a restart to take effect.")
-        ))
+        self.add(
+            self.get_description_label(
+                _("Access your game libraries from various sources. " "Changes require a restart to take effect.")
+            )
+        )
         self.frame = Gtk.Frame(visible=True, shadow_type=Gtk.ShadowType.ETCHED_IN)
         self.listbox = Gtk.ListBox(visible=True)
         self.frame.add(self.listbox)
-        self.pack_start(self.frame, False, False, 12)
-        GLib.idle_add(self.populate_services)
+        self.pack_start(self.frame, False, False, 0)
 
     def populate_services(self):
         for service_key in SERVICES:
@@ -45,9 +45,9 @@ class ServicesBox(BaseConfigBox):
         )
         service = SERVICES[service_key]
 
-        icon = ScaledImage.get_runtime_icon_image(service.icon, service.id,
-                                                  scale_factor=self.get_scale_factor(),
-                                                  visible=True)
+        icon = ScaledImage.get_runtime_icon_image(
+            service.icon, service.id, scale_factor=self.get_scale_factor(), visible=True
+        )
         box.pack_start(icon, False, False, 0)
         service_label_box = Gtk.VBox(visible=True)
         label = Gtk.Label(visible=True)
@@ -55,15 +55,14 @@ class ServicesBox(BaseConfigBox):
         label.set_alignment(0, 0.5)
         service_label_box.pack_start(label, False, False, 0)
 
-        desc_label = Gtk.Label(visible=True)
+        desc_label = Gtk.Label(visible=True, wrap=True)
         desc_label.set_alignment(0, 0.5)
         desc_label.set_text(service.description)
         service_label_box.pack_start(desc_label, False, False, 0)
         box.pack_start(service_label_box, True, True, 0)
 
         checkbox = Gtk.Switch(visible=True)
-        if settings.read_setting(service_key,
-                                 section="services").lower() == "true":
+        if settings.read_setting(service_key, section="services").lower() == "true":
             checkbox.set_active(True)
         checkbox.connect("state-set", self._on_service_change, service_key)
         alignment = Gtk.Alignment.new(0.5, 0.5, 0, 0)

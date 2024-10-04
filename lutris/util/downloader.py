@@ -16,7 +16,6 @@ get_time = time.monotonic
 
 
 class Downloader:
-
     """Non-blocking downloader.
 
     Do start() then check_progress() at regular intervals.
@@ -24,13 +23,7 @@ class Downloader:
     Stop with cancel().
     """
 
-    (
-        INIT,
-        DOWNLOADING,
-        CANCELLED,
-        ERROR,
-        COMPLETED
-    ) = list(range(5))
+    (INIT, DOWNLOADING, CANCELLED, ERROR, COMPLETED) = list(range(5))
 
     def __init__(self, url: str, dest: str, overwrite: bool = False, referer=None, cookies=None) -> None:
         self.url: str = url
@@ -144,7 +137,7 @@ class Downloader:
             response.raise_for_status()
             self.full_size = int(response.headers.get("Content-Length", "").strip() or 0)
             self.progress_event.set()
-            for chunk in response.iter_content(chunk_size=1024):
+            for chunk in response.iter_content(chunk_size=8192):
                 if not self.file_pointer:
                     break
                 if chunk:

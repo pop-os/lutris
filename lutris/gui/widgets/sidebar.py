@@ -1,15 +1,15 @@
 """Sidebar for the main window"""
+
 import locale
 from gettext import gettext as _
 
 from gi.repository import GLib, GObject, Gtk, Pango
 
 from lutris import runners, services
+from lutris.config import LutrisConfig
 from lutris.database import categories as categories_db
 from lutris.database import games as games_db
-from lutris.exceptions import watch_errors
 from lutris.game import Game
-from lutris.gui import dialogs
 from lutris.gui.config.edit_category_games import EditCategoryGamesDialog
 from lutris.gui.config.runner import RunnerConfigDialog
 from lutris.gui.config.runner_box import RunnerBox
@@ -18,9 +18,11 @@ from lutris.gui.dialogs import ErrorDialog
 from lutris.gui.dialogs.runner_install import RunnerInstallDialog
 from lutris.gui.widgets.utils import has_stock_icon
 from lutris.installer.interpreter import ScriptInterpreter
-from lutris.runners import InvalidRunner
+from lutris.runners import InvalidRunnerError
 from lutris.services import SERVICES
-from lutris.services.base import AuthTokenExpired, BaseService
+from lutris.services.base import AuthTokenExpiredError, BaseService
+from lutris.util.library_sync import LOCAL_LIBRARY_SYNCED, LOCAL_LIBRARY_SYNCING
+from lutris.util.strings import get_natural_sort_key
 
 TYPE = 0
 SLUG = 1
@@ -33,6 +35,7 @@ SERVICE_INDICES = {name: index for index, name in enumerate(SERVICES.keys())}
 
 class SidebarRow(Gtk.ListBoxRow):
     """A row in the sidebar containing possible action buttons"""
+
     MARGIN = 9
     SPACING = 6
 
@@ -50,7 +53,6 @@ class SidebarRow(Gtk.ListBoxRow):
         self.application = application
         self.type = type_
         self.id = id_
-        self.runner = None
         self.name = name
         self.is_updating = False
         self.buttons = {}
@@ -126,14 +128,8 @@ class SidebarRow(Gtk.ListBoxRow):
 
 
 class ServiceSidebarRow(SidebarRow):
-
     def __init__(self, service):
-        super().__init__(
-            service.id,
-            "service",
-            service.name,
-            LutrisSidebar.get_sidebar_icon(service.icon)
-        )
+        super().__init__(service.id, "service", service.name, LutrisSidebar.get_sidebar_icon(service.icon))
         self.service = service
 
     @property
@@ -144,17 +140,13 @@ class ServiceSidebarRow(SidebarRow):
         """Return the definition of buttons to be added to the row"""
         displayed_buttons = []
         if self.service.is_launchable():
-            displayed_buttons.append(
-                ("media-playback-start-symbolic", _("Run"), self.on_service_run, "run")
-            )
-        displayed_buttons.append(
-            ("view-refresh-symbolic", _("Reload"), self.on_refresh_clicked, "refresh")
-        )
+            displayed_buttons.append(("media-playback-start-symbolic", _("Run"), self.on_service_run, "run"))
+        displayed_buttons.append(("view-refresh-symbolic", _("Reload"), self.on_refresh_clicked, "refresh"))
         return displayed_buttons
 
     def on_service_run(self, button):
         """Run a launcher associated with a service"""
-        self.service.run()
+        self.service.run(self.get_toplevel())
 
     def on_refresh_clicked(self, button):
         """Reload the service games"""
@@ -166,7 +158,7 @@ class ServiceSidebarRow(SidebarRow):
 
     def service_reloaded_cb(self, error):
         if error:
-            if isinstance(error, AuthTokenExpired):
+            if isinstance(error, AuthTokenExpiredError):
                 self.service.logout()
                 self.service.login(parent=self.get_toplevel())
             else:
@@ -184,7 +176,7 @@ class OnlineServiceSidebarRow(ServiceSidebarRow):
             "run": (("media-playback-start-symbolic", _("Run"), self.on_service_run, "run")),
             "refresh": ("view-refresh-symbolic", _("Reload"), self.on_refresh_clicked, "refresh"),
             "disconnect": ("system-log-out-symbolic", _("Disconnect"), self.on_connect_clicked, "disconnect"),
-            "connect": ("avatar-default-symbolic", _("Connect"), self.on_connect_clicked, "connect")
+            "connect": ("avatar-default-symbolic", _("Connect"), self.on_connect_clicked, "connect"),
         }
 
     def get_actions(self):
@@ -217,62 +209,59 @@ class RunnerSidebarRow(SidebarRow):
         # Creation is delayed because only installed runners can be imported
         # and all visible boxes should be installed.
         try:
-            self.runner = runners.import_runner(self.id)()
-        except InvalidRunner:
+            runner = self.get_runner()
+        except InvalidRunnerError:
             return entries
 
-        if self.runner.multiple_versions:
-            entries.append((
-                "system-software-install-symbolic",
-                _("Manage Versions"),
-                self.on_manage_versions,
-                "manage-versions"
-            ))
-        if self.runner.runnable_alone:
+        if runner.multiple_versions:
+            entries.append(
+                ("system-software-install-symbolic", _("Manage Versions"), self.on_manage_versions, "manage-versions")
+            )
+        if runner.runnable_alone:
             entries.append(("media-playback-start-symbolic", _("Run"), self.on_run_runner, "run"))
         entries.append(("emblem-system-symbolic", _("Configure"), self.on_configure_runner, "configure"))
         return entries
 
-    @watch_errors()
+    def get_runner(self):
+        return runners.import_runner(self.id)()
+
     def on_run_runner(self, *_args):
         """Runs the runner without no game."""
-        self.runner.run(self.get_toplevel())
+        runner = self.get_runner()
+        runner.run(self.get_toplevel())
 
-    @watch_errors()
     def on_configure_runner(self, *_args):
         """Show runner configuration"""
-        self.application.show_window(RunnerConfigDialog, runner=self.runner, parent=self.get_toplevel())
+        runner = self.get_runner()
+        self.application.show_window(RunnerConfigDialog, runner=runner, parent=self.get_toplevel())
 
-    @watch_errors()
     def on_manage_versions(self, *_args):
         """Manage runner versions"""
-        dlg_title = _("Manage %s versions") % self.runner.name
-        self.application.show_window(RunnerInstallDialog, title=dlg_title,
-                                     runner=self.runner, parent=self.get_toplevel())
-
-    def on_watched_error(self, error):
-        dialogs.ErrorDialog(error, parent=self.get_toplevel())
+        runner = self.get_runner()
+        dlg_title = _("Manage %s versions") % runner.human_name
+        self.application.show_window(RunnerInstallDialog, title=dlg_title, runner=runner, parent=self.get_toplevel())
 
 
 class CategorySidebarRow(SidebarRow):
-
     def __init__(self, category, application):
         super().__init__(
-            category['name'],
+            category["name"],
             "user_category",
-            category['name'],
+            category["name"],
             Gtk.Image.new_from_icon_name("folder-symbolic", Gtk.IconSize.MENU),
-            application=application
+            application=application,
         )
         self.category = category
 
-        self._sort_name = locale.strxfrm(category['name'])
+        self._sort_name = locale.strxfrm(category["name"])
+
+    @property
+    def sort_key(self):
+        return get_natural_sort_key(self.name)
 
     def get_actions(self):
         """Return the definition of buttons to be added to the row"""
-        return [
-            ("applications-system-symbolic", _("Edit Games"), self.on_category_clicked, "manage-category-games")
-        ]
+        return [("applications-system-symbolic", _("Edit Games"), self.on_category_clicked, "manage-category-games")]
 
     def on_category_clicked(self, button):
         self.application.show_window(EditCategoryGamesDialog, category=self.category, parent=self.get_toplevel())
@@ -280,13 +269,13 @@ class CategorySidebarRow(SidebarRow):
 
     def __lt__(self, other):
         if not isinstance(other, CategorySidebarRow):
-            raise ValueError('Cannot compare %s to %s' % (self.__class__.__name__, other.__class__.__name__))
+            raise ValueError("Cannot compare %s to %s" % (self.__class__.__name__, other.__class__.__name__))
 
         return self._sort_name < other._sort_name
 
     def __gt__(self, other):
         if not isinstance(other, CategorySidebarRow):
-            raise ValueError('Cannot compare %s to %s' % (self.__class__.__name__, other.__class__.__name__))
+            raise ValueError("Cannot compare %s to %s" % (self.__class__.__name__, other.__class__.__name__))
 
         return self._sort_name > other._sort_name
 
@@ -313,7 +302,7 @@ class SidebarHeader(Gtk.Box):
         self.show_all()
 
 
-class DummyRow():
+class DummyRow:
     """Dummy class for rows that may not be initialized."""
 
     def show(self):
@@ -330,11 +319,12 @@ class LutrisSidebar(Gtk.ListBox):
         super().__init__()
         self.set_size_request(200, -1)
         self.application = application
-        self.get_style_context().add_class("sidebar")
+        self.get_style_context().add_class("lutrissidebar")
 
         # Empty values until LutrisWindow explicitly initializes the rows
         # at the right time.
         self.installed_runners = []
+        self.runner_visibility_cache = {}
         self.used_categories = set()
         self.active_services = {}
         self.active_platforms = []
@@ -344,7 +334,9 @@ class LutrisSidebar(Gtk.ListBox):
 
         self.category_rows = {}
         # A dummy objects that allows inspecting why/when we have a show() call on the object.
+        self.games_row = DummyRow()
         self.running_row = DummyRow()
+        self.hidden_row = DummyRow()
         self.missing_row = DummyRow()
         self.row_headers = {
             "library": SidebarHeader(_("Library"), header_index=0),
@@ -355,16 +347,18 @@ class LutrisSidebar(Gtk.ListBox):
         }
         GObject.add_emission_hook(RunnerBox, "runner-installed", self.update_rows)
         GObject.add_emission_hook(RunnerBox, "runner-removed", self.update_rows)
+        GObject.add_emission_hook(RunnerConfigDialog, "runner-updated", self.update_runner_rows)
         GObject.add_emission_hook(ScriptInterpreter, "runners-installed", self.update_rows)
         GObject.add_emission_hook(ServicesBox, "services-changed", self.update_rows)
         GObject.add_emission_hook(Game, "game-start", self.on_game_start)
-        GObject.add_emission_hook(Game, "game-stop", self.on_game_stop)
+        GObject.add_emission_hook(Game, "game-stopped", self.on_game_stopped)
         GObject.add_emission_hook(Game, "game-updated", self.update_rows)
-        GObject.add_emission_hook(Game, "game-removed", self.update_rows)
         GObject.add_emission_hook(BaseService, "service-login", self.on_service_auth_changed)
         GObject.add_emission_hook(BaseService, "service-logout", self.on_service_auth_changed)
         GObject.add_emission_hook(BaseService, "service-games-load", self.on_service_games_updating)
         GObject.add_emission_hook(BaseService, "service-games-loaded", self.on_service_games_updated)
+        LOCAL_LIBRARY_SYNCING.register(self.on_local_library_syncing)
+        LOCAL_LIBRARY_SYNCED.register(self.on_local_library_synced)
         self.set_filter_func(self._filter_func)
         self.set_header_func(self._header_func)
         self.show_all()
@@ -391,21 +385,20 @@ class LutrisSidebar(Gtk.ListBox):
 
         # Create the basic rows that are not data dependant
 
-        self.add(
-            SidebarRow(
-                "all",
-                "category",
-                _("Games"),
-                Gtk.Image.new_from_icon_name("applications-games-symbolic", Gtk.IconSize.MENU)
-            )
+        self.games_row = SidebarRow(
+            "all",
+            "category",
+            _("Games"),
+            Gtk.Image.new_from_icon_name("applications-games-symbolic", Gtk.IconSize.MENU),
         )
+        self.add(self.games_row)
 
         self.add(
             SidebarRow(
                 "recent",
                 "dynamic_category",
                 _("Recent"),
-                Gtk.Image.new_from_icon_name("document-open-recent-symbolic", Gtk.IconSize.MENU)
+                Gtk.Image.new_from_icon_name("document-open-recent-symbolic", Gtk.IconSize.MENU),
             )
         )
 
@@ -414,14 +407,23 @@ class LutrisSidebar(Gtk.ListBox):
                 "favorite",
                 "category",
                 _("Favorites"),
-                Gtk.Image.new_from_icon_name("favorite-symbolic", Gtk.IconSize.MENU)
+                Gtk.Image.new_from_icon_name("favorite-symbolic", Gtk.IconSize.MENU),
             )
         )
+
+        self.hidden_row = SidebarRow(
+            ".hidden",
+            "category",
+            _("Hidden"),
+            Gtk.Image.new_from_icon_name("action-unavailable-symbolic", Gtk.IconSize.MENU),
+        )
+        self.add(self.hidden_row)
+
         self.missing_row = SidebarRow(
             "missing",
             "dynamic_category",
             _("Missing"),
-            Gtk.Image.new_from_icon_name("dialog-warning-symbolic", Gtk.IconSize.MENU)
+            Gtk.Image.new_from_icon_name("dialog-warning-symbolic", Gtk.IconSize.MENU),
         )
         self.add(self.missing_row)
 
@@ -429,11 +431,13 @@ class LutrisSidebar(Gtk.ListBox):
             "running",
             "dynamic_category",
             _("Running"),
-            Gtk.Image.new_from_icon_name("media-playback-start-symbolic", Gtk.IconSize.MENU)
+            Gtk.Image.new_from_icon_name("media-playback-start-symbolic", Gtk.IconSize.MENU),
         )
         # I wanted this to be on top but it really messes with the headers when showing/hiding the row.
         self.add(self.running_row)
         self.show_all()
+        self.hidden_row.hide()
+        self.missing_row.hide()
         self.running_row.hide()
 
         # Create the dynamic rows that are initially needed
@@ -451,23 +455,45 @@ class LutrisSidebar(Gtk.ListBox):
         """Selects the row for the category indicated by a category tuple,
         like ('service', 'lutris')"""
         selected_row_type, selected_row_id = value or ("category", "all")
-        for row in self.get_children():
+        children = list(self.get_children())
+        for row in children:
             if row.type == selected_row_type and row.id == selected_row_id:
-                self.select_row(row)
+                if row.get_visible():
+                    self.select_row(row)
+                    return
+
                 break
 
+        for row in children:
+            if row.get_visible():
+                self.select_row(row)
+                return
+
     def _filter_func(self, row):
+        def is_runner_visible(runner_name):
+            if runner_name not in self.runner_visibility_cache:
+                runner_config = LutrisConfig(runner_slug=row.id)
+                self.runner_visibility_cache[runner_name] = runner_config.runner_config.get(
+                    "visible_in_side_panel", True
+                )
+            return self.runner_visibility_cache[runner_name]
+
         if not row or not row.id or row.type in ("category", "dynamic_category"):
             return True
-        if row.type == "user_category":
-            return row.id in self.used_categories
-        if row.type == "service":
-            return row.id in self.active_services
+
         if row.type == "runner":
             if row.id is None:
                 return True  # 'All'
-            return row.id in self.installed_runners
-        return row.id in self.active_platforms
+            return row.id in self.installed_runners and is_runner_visible(row.id)
+
+        if row.type == "user_category":
+            allowed_ids = self.used_categories
+        elif row.type == "service":
+            allowed_ids = self.active_services
+        else:
+            allowed_ids = self.active_platforms
+
+        return row.id in allowed_ids
 
     def _header_func(self, row, before):
         if not before:
@@ -483,7 +509,7 @@ class LutrisSidebar(Gtk.ListBox):
         else:
             header = None
 
-        if row.get_header() != header:
+        if header and row.get_header() != header:
             # GTK is messy here; a header can't belong to two rows at once,
             # so we must remove it from the one that owns it, if any, and
             # also from the sidebar itself. Then we can reuse it.
@@ -493,6 +519,11 @@ class LutrisSidebar(Gtk.ListBox):
                     self.remove(header)
             header.first_row = row
             row.set_header(header)
+
+    def update_runner_rows(self, *_args):
+        self.runner_visibility_cache.clear()
+        self.update_rows()
+        return True
 
     def update_rows(self, *_args):
         """Generates any missing rows that are now needed, and re-evaluate the filter to hide
@@ -544,7 +575,7 @@ class LutrisSidebar(Gtk.ListBox):
                     "runner",
                     runner.human_name,
                     self.get_sidebar_icon(icon_name),
-                    application=self.application
+                    application=self.application,
                 )
                 self.runner_rows[runner_name] = runner_row
                 insert_row(runner_row)
@@ -553,11 +584,7 @@ class LutrisSidebar(Gtk.ListBox):
             if platform not in self.platform_rows:
                 icon_name = platform.lower().replace(" ", "").replace("/", "_") + "-symbolic"
                 platform_row = SidebarRow(
-                    platform,
-                    "platform",
-                    platform,
-                    self.get_sidebar_icon(icon_name),
-                    application=self.application
+                    platform, "platform", platform, self.get_sidebar_icon(icon_name), application=self.application
                 )
                 self.platform_rows[platform] = platform_row
                 insert_row(platform_row)
@@ -576,9 +603,9 @@ class LutrisSidebar(Gtk.ListBox):
         self.running_row.show()
         return True
 
-    def on_game_stop(self, _game):
+    def on_game_stopped(self, _game):
         """Hide the "running" section when no games are running"""
-        if not self.application.running_games.get_n_items():
+        if not self.application.has_running_games:
             self.running_row.hide()
 
             if self.get_selected_row() == self.running_row:
@@ -603,3 +630,11 @@ class LutrisSidebar(Gtk.ListBox):
             self.service_rows[service.id].is_updating = False
             self.service_rows[service.id].update_buttons()
         return True
+
+    def on_local_library_syncing(self):
+        self.games_row.is_updating = True
+        self.games_row.update_buttons()
+
+    def on_local_library_synced(self):
+        self.games_row.is_updating = False
+        self.games_row.update_buttons()

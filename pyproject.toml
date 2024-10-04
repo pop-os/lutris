@@ -1,11 +1,12 @@
 [tool.mypy]
-python_version = "3.7"
+python_version = "3.8"
 packages = [
     "lutris",
     "tests",
 ]
 exclude = [
     ".*_pb2.py",  # Any automatically generated protobuf files
+    "venv"
 ]
 disable_error_code = [
     "no-redef",  # Allow variable redefinition
@@ -17,7 +18,7 @@ disable_error_code = [
 allow_redefinition = true
 follow_imports = "silent"
 ignore_missing_imports = true
-
+implicit_optional = true
 
 [tool.mypy-baseline]
 # --baseline-path: the file where the baseline should be stored
